@@ -1,0 +1,203 @@
+#!/bin/bash
+# SoupaWhisper Control CLI
+
+SERVICE="soupawhisper"
+CONFIG_FILE="$HOME/.config/soupawhisper/config.ini"
+
+# Model presets: "name|backend|model"
+MODELS=(
+    "Whisper Tiny (fastest)|faster-whisper|tiny.en"
+    "Whisper Base (default)|faster-whisper|base.en"
+    "Whisper Small|faster-whisper|small.en"
+    "Whisper Medium|faster-whisper|medium.en"
+    "Whisper Large v3|faster-whisper|large-v3"
+    "Qwen3 ASR 0.6B (fast)|qwen-asr|Qwen/Qwen3-ASR-0.6B"
+    "Qwen3 ASR 1.7B (best)|qwen-asr|Qwen/Qwen3-ASR-1.7B"
+    "Distil Whisper|transformers|distil-whisper/distil-large-v3"
+    "Whisper Turbo|transformers|openai/whisper-large-v3-turbo"
+)
+
+get_current_model() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        backend=$(grep -E "^backend\s*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+        model=$(grep -E "^model\s*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+        echo "$backend: $model"
+    else
+        echo "Not configured"
+    fi
+}
+
+set_model() {
+    local backend="$1"
+    local model="$2"
+
+    # Ensure config directory exists
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+
+    # Create or update config
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # Update existing config
+        if grep -q "^\[asr\]" "$CONFIG_FILE"; then
+            # Update [asr] section
+            sed -i "s/^backend\s*=.*/backend = $backend/" "$CONFIG_FILE"
+            sed -i "s/^model\s*=.*/model = $model/" "$CONFIG_FILE"
+        else
+            # Add [asr] section if missing (legacy config)
+            cat >> "$CONFIG_FILE" << EOF
+
+[asr]
+backend = $backend
+model = $model
+device = cuda
+EOF
+        fi
+    else
+        # Create new config
+        cat > "$CONFIG_FILE" << EOF
+[asr]
+backend = $backend
+model = $model
+device = cuda
+language =
+
+[hotkey]
+key = f12
+
+[behavior]
+auto_type = true
+notifications = true
+EOF
+    fi
+}
+
+show_status() {
+    echo ""
+    systemctl --user status $SERVICE --no-pager 2>/dev/null | head -5
+    echo ""
+}
+
+show_model_menu() {
+    echo ""
+    echo "======== Select ASR Model ========"
+    echo ""
+    echo "  Current: $(get_current_model)"
+    echo ""
+    echo "  --- Faster-Whisper (lightweight) ---"
+    echo "  1) Whisper Tiny    (fastest, basic)"
+    echo "  2) Whisper Base    (fast, good)"
+    echo "  3) Whisper Small   (medium, better)"
+    echo "  4) Whisper Medium  (slower, great)"
+    echo "  5) Whisper Large   (slowest, best)"
+    echo ""
+    echo "  --- Qwen3-ASR (state-of-the-art) ---"
+    echo "  6) Qwen3 ASR 0.6B  (fast, multilingual)"
+    echo "  7) Qwen3 ASR 1.7B  (best accuracy)"
+    echo ""
+    echo "  --- Transformers (HuggingFace) ---"
+    echo "  8) Distil Whisper  (6x faster)"
+    echo "  9) Whisper Turbo   (official fast)"
+    echo ""
+    echo "  b) Back"
+    echo ""
+}
+
+select_model() {
+    while true; do
+        show_model_menu
+        read -p "Select model: " choice
+
+        case $choice in
+            1) set_model "faster-whisper" "tiny.en" ;;
+            2) set_model "faster-whisper" "base.en" ;;
+            3) set_model "faster-whisper" "small.en" ;;
+            4) set_model "faster-whisper" "medium.en" ;;
+            5) set_model "faster-whisper" "large-v3" ;;
+            6) set_model "qwen-asr" "Qwen/Qwen3-ASR-0.6B" ;;
+            7) set_model "qwen-asr" "Qwen/Qwen3-ASR-1.7B" ;;
+            8) set_model "transformers" "distil-whisper/distil-large-v3" ;;
+            9) set_model "transformers" "openai/whisper-large-v3-turbo" ;;
+            b|B) return ;;
+            *) echo "Invalid option."; continue ;;
+        esac
+
+        echo ""
+        echo "Model set to: $(get_current_model)"
+        echo ""
+        read -p "Restart service to apply? (y/n): " restart
+        if [[ "$restart" == "y" || "$restart" == "Y" ]]; then
+            systemctl --user restart $SERVICE
+            echo "Service restarted."
+        fi
+        return
+    done
+}
+
+show_menu() {
+    echo "================================"
+    echo "   SoupaWhisper Control"
+    echo "================================"
+    echo ""
+    echo "  Model: $(get_current_model)"
+    echo ""
+    echo "  1) Start"
+    echo "  2) Stop"
+    echo "  3) Restart"
+    echo "  4) Status"
+    echo "  5) Select Model"
+    echo "  6) Enable auto-start"
+    echo "  7) Disable auto-start"
+    echo "  8) View logs"
+    echo "  q) Quit"
+    echo ""
+}
+
+while true; do
+    show_menu
+    read -p "Choose an option: " choice
+
+    case $choice in
+        1)
+            echo "Starting SoupaWhisper..."
+            systemctl --user start $SERVICE
+            show_status
+            ;;
+        2)
+            echo "Stopping SoupaWhisper..."
+            systemctl --user stop $SERVICE
+            echo "Stopped."
+            ;;
+        3)
+            echo "Restarting SoupaWhisper..."
+            systemctl --user restart $SERVICE
+            show_status
+            ;;
+        4)
+            systemctl --user status $SERVICE --no-pager
+            ;;
+        5)
+            select_model
+            ;;
+        6)
+            systemctl --user enable $SERVICE
+            echo "Auto-start enabled."
+            ;;
+        7)
+            systemctl --user disable $SERVICE
+            echo "Auto-start disabled."
+            ;;
+        8)
+            journalctl --user -u $SERVICE -n 30 --no-pager
+            ;;
+        q|Q)
+            echo "Bye!"
+            exit 0
+            ;;
+        *)
+            echo "Invalid option."
+            ;;
+    esac
+
+    echo ""
+    read -p "Press Enter to continue..."
+    clear
+done

@@ -79,6 +79,55 @@ setup_config() {
     fi
 }
 
+# Install control utility
+install_ctl() {
+    echo ""
+    echo "Installing control utility..."
+
+    mkdir -p "$HOME/.local/bin"
+    cp "$SCRIPT_DIR/soupawhisper-ctl" "$HOME/.local/bin/soupawhisper-ctl"
+    chmod +x "$HOME/.local/bin/soupawhisper-ctl"
+
+    echo "Installed soupawhisper-ctl to ~/.local/bin/"
+
+    # Check if ~/.local/bin is in PATH
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        echo ""
+        echo "NOTE: Add ~/.local/bin to your PATH:"
+        echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
+    fi
+}
+
+# Install desktop file
+install_desktop() {
+    echo ""
+    echo "Installing desktop launcher..."
+
+    local desktop_dir="$HOME/.local/share/applications"
+    mkdir -p "$desktop_dir"
+
+    cat > "$desktop_dir/soupawhisper.desktop" << EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=SoupaWhisper Control
+Comment=Manage SoupaWhisper voice dictation service
+Exec=gnome-terminal -- soupawhisper-ctl
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;AudioVideo;
+EOF
+
+    echo "Installed desktop launcher"
+
+    # Also copy to Desktop if it exists
+    if [ -d "$HOME/Desktop" ]; then
+        cp "$desktop_dir/soupawhisper.desktop" "$HOME/Desktop/"
+        chmod +x "$HOME/Desktop/soupawhisper.desktop"
+        echo "Copied launcher to Desktop"
+    fi
+}
+
 # Install systemd service
 install_service() {
     echo ""
@@ -140,11 +189,18 @@ main() {
     install_deps
     install_python
     setup_config
+    install_ctl
+
+    echo ""
+    read -p "Install desktop launcher? [Y/n] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        install_desktop
+    fi
 
     echo ""
     read -p "Install as systemd service? [y/N] " -n 1 -r
     echo ""
-
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         install_service
     fi
@@ -157,9 +213,11 @@ main() {
     echo "To run manually:"
     echo "  poetry run python dictate.py"
     echo ""
+    echo "Control panel:"
+    echo "  soupawhisper-ctl"
+    echo ""
     echo "Config: $CONFIG_DIR/config.ini"
     echo "Hotkey: F12 (hold to record)"
-    echo "Exit:   Ctrl+C"
 }
 
 main "$@"

@@ -101,6 +101,40 @@ poetry run python dictate.py --list-models
 - Release to transcribe → copies to clipboard and types into active input
 - Press **Ctrl+C** to quit (when running manually)
 
+## Control Panel
+
+The installer adds a control utility for easy management:
+
+```bash
+soupawhisper-ctl
+```
+
+```
+================================
+   SoupaWhisper Control
+================================
+
+  Model: qwen-asr: Qwen/Qwen3-ASR-0.6B
+
+  1) Start
+  2) Stop
+  3) Restart
+  4) Status
+  5) Select Model
+  6) Enable auto-start
+  7) Disable auto-start
+  8) View logs
+  q) Quit
+```
+
+The control panel lets you:
+- Start/stop/restart the service
+- **Switch between ASR models** without editing config files
+- Enable/disable auto-start on login
+- View logs
+
+A desktop launcher is also installed for quick access.
+
 ## Run as a systemd Service
 
 The installer can set this up automatically. If you skipped it, run:
@@ -118,6 +152,8 @@ systemctl --user restart soupawhisper   # Restart
 systemctl --user status soupawhisper    # Status
 journalctl --user -u soupawhisper -f    # View logs
 ```
+
+Or use the control panel: `soupawhisper-ctl`
 
 ## Configuration
 
