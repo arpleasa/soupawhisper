@@ -25,6 +25,24 @@ python = "^3.10"
 faster-whisper = "^1.0.0"
 pynput = "^1.7.6"
 
+[tool.poetry.extras]
+qwen = ["qwen-asr"]
+transformers = ["transformers", "torch"]
+all = ["qwen-asr", "transformers", "torch"]
+
+[tool.poetry.group.qwen]
+optional = true
+
+[tool.poetry.group.qwen.dependencies]
+qwen-asr = "^0.0.6"
+
+[tool.poetry.group.transformers]
+optional = true
+
+[tool.poetry.group.transformers.dependencies]
+transformers = "^4.40.0"
+torch = "^2.0.0"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

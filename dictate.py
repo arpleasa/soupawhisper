@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-SoupaWhisper - Voice dictation tool using faster-whisper.
+SoupaWhisper - Voice dictation tool with multiple ASR backends.
 Hold the hotkey to record, release to transcribe and copy to clipboard.
+
+Supported backends:
+- faster-whisper (original, lightweight)
+- qwen-asr (Qwen3-ASR, multilingual, state-of-the-art)
+- transformers (generic HuggingFace models)
 """
 
 import argparse
@@ -15,9 +20,8 @@ import os
 from pathlib import Path
 
 from pynput import keyboard
-from faster_whisper import WhisperModel
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Load configuration
 CONFIG_PATH = Path.home() / ".config" / "soupawhisper" / "config.ini"
@@ -28,9 +32,11 @@ def load_config():
 
     # Defaults
     defaults = {
+        "backend": "faster-whisper",
         "model": "base.en",
         "device": "cpu",
         "compute_type": "int8",
+        "language": "",
         "key": "f12",
         "auto_type": "true",
         "notifications": "true",
@@ -40,9 +46,11 @@ def load_config():
         config.read(CONFIG_PATH)
 
     return {
-        "model": config.get("whisper", "model", fallback=defaults["model"]),
-        "device": config.get("whisper", "device", fallback=defaults["device"]),
-        "compute_type": config.get("whisper", "compute_type", fallback=defaults["compute_type"]),
+        "backend": config.get("asr", "backend", fallback=defaults["backend"]),
+        "model": config.get("asr", "model", fallback=config.get("whisper", "model", fallback=defaults["model"])),
+        "device": config.get("asr", "device", fallback=config.get("whisper", "device", fallback=defaults["device"])),
+        "compute_type": config.get("asr", "compute_type", fallback=config.get("whisper", "compute_type", fallback=defaults["compute_type"])),
+        "language": config.get("asr", "language", fallback=defaults["language"]),
         "key": config.get("hotkey", "key", fallback=defaults["key"]),
         "auto_type": config.getboolean("behavior", "auto_type", fallback=True),
         "notifications": config.getboolean("behavior", "notifications", fallback=True),
@@ -65,9 +73,11 @@ def get_hotkey(key_name):
 
 
 HOTKEY = get_hotkey(CONFIG["key"])
-MODEL_SIZE = CONFIG["model"]
+BACKEND = CONFIG["backend"]
+MODEL = CONFIG["model"]
 DEVICE = CONFIG["device"]
 COMPUTE_TYPE = CONFIG["compute_type"]
+LANGUAGE = CONFIG["language"] or None
 AUTO_TYPE = CONFIG["auto_type"]
 NOTIFICATIONS = CONFIG["notifications"]
 
@@ -77,21 +87,30 @@ class Dictation:
         self.recording = False
         self.record_process = None
         self.temp_file = None
-        self.model = None
+        self.backend = None
         self.model_loaded = threading.Event()
         self.model_error = None
         self.running = True
 
         # Load model in background
-        print(f"Loading Whisper model ({MODEL_SIZE})...")
+        print(f"Loading ASR model ({BACKEND}: {MODEL})...")
         threading.Thread(target=self._load_model, daemon=True).start()
 
     def _load_model(self):
         try:
-            self.model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+            from backends import create_backend
+
+            self.backend = create_backend(
+                backend=BACKEND,
+                model=MODEL,
+                device=DEVICE,
+                compute_type=COMPUTE_TYPE,
+                language=LANGUAGE,
+            )
             self.model_loaded.set()
             hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
-            print(f"Model loaded. Ready for dictation!")
+            print(f"Model loaded: {self.backend.name}")
+            print(f"Ready for dictation!")
             print(f"Hold [{hotkey_name}] to record, release to transcribe.")
             print("Press Ctrl+C to quit.")
         except Exception as e:
@@ -100,6 +119,10 @@ class Dictation:
             print(f"Failed to load model: {e}")
             if "cudnn" in str(e).lower() or "cuda" in str(e).lower():
                 print("Hint: Try setting device = cpu in your config, or install cuDNN.")
+            elif "qwen" in str(e).lower():
+                print("Hint: Install qwen-asr with: pip install qwen-asr")
+            elif "transformers" in str(e).lower():
+                print("Hint: Install transformers with: pip install transformers torch")
 
     def notify(self, title, message, icon="dialog-information", timeout=2000):
         """Send a desktop notification."""
@@ -131,7 +154,7 @@ class Dictation:
             [
                 "arecord",
                 "-f", "S16_LE",  # Format: 16-bit little-endian
-                "-r", "16000",   # Sample rate: 16kHz (what Whisper expects)
+                "-r", "16000",   # Sample rate: 16kHz (standard for ASR)
                 "-c", "1",       # Mono
                 "-t", "wav",
                 self.temp_file.name
@@ -165,15 +188,9 @@ class Dictation:
             self.notify("Error", "Model failed to load", "dialog-error", 3000)
             return
 
-        # Transcribe
+        # Transcribe using the configured backend
         try:
-            segments, info = self.model.transcribe(
-                self.temp_file.name,
-                beam_size=5,
-                vad_filter=True,
-            )
-
-            text = " ".join(segment.text.strip() for segment in segments)
+            text = self.backend.transcribe(self.temp_file.name)
 
             if text:
                 # Copy to clipboard using xclip
@@ -242,16 +259,66 @@ def check_dependencies():
         sys.exit(1)
 
 
+def list_models():
+    """Print available model shortcuts."""
+    from backends import MODEL_SHORTCUTS, BACKENDS
+
+    print("\nAvailable backends:")
+    for name in BACKENDS:
+        print(f"  - {name}")
+
+    print("\nModel shortcuts (use in config or --model):")
+    print("-" * 50)
+    for shortcut, (backend, model) in sorted(MODEL_SHORTCUTS.items()):
+        print(f"  {shortcut:20} → {backend}: {model}")
+
+    print("\nOr use full model names:")
+    print("  - faster-whisper: tiny.en, base.en, small.en, medium.en, large-v3")
+    print("  - qwen-asr: Qwen/Qwen3-ASR-0.6B, Qwen/Qwen3-ASR-1.7B")
+    print("  - transformers: any HuggingFace ASR model ID")
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="SoupaWhisper - Push-to-talk voice dictation"
+        description="SoupaWhisper - Push-to-talk voice dictation with multiple ASR backends"
     )
     parser.add_argument(
         "-v", "--version",
         action="version",
         version=f"SoupaWhisper {__version__}"
     )
-    parser.parse_args()
+    parser.add_argument(
+        "--list-models",
+        action="store_true",
+        help="List available models and backends"
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["faster-whisper", "qwen-asr", "transformers", "auto"],
+        help="ASR backend to use (overrides config)"
+    )
+    parser.add_argument(
+        "--model",
+        help="Model name or shortcut (overrides config)"
+    )
+    parser.add_argument(
+        "--device",
+        help="Device: cpu, cuda, cuda:0, etc. (overrides config)"
+    )
+    args = parser.parse_args()
+
+    if args.list_models:
+        list_models()
+        sys.exit(0)
+
+    # Override config with CLI args
+    global BACKEND, MODEL, DEVICE
+    if args.backend:
+        BACKEND = args.backend
+    if args.model:
+        MODEL = args.model
+    if args.device:
+        DEVICE = args.device
 
     print(f"SoupaWhisper v{__version__}")
     print(f"Config: {CONFIG_PATH}")

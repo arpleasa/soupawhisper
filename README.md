@@ -1,6 +1,14 @@
 # SoupaWhisper
 
-A simple push-to-talk voice dictation tool for Linux using faster-whisper. Hold a key to record, release to transcribe, and it automatically copies to clipboard and types into the active input.
+A push-to-talk voice dictation tool for Linux with multiple ASR backend support. Hold a key to record, release to transcribe, and it automatically copies to clipboard and types into the active input.
+
+## Supported ASR Backends
+
+| Backend | Models | Best For |
+|---------|--------|----------|
+| **faster-whisper** | tiny.en → large-v3 | Lightweight, CPU-friendly |
+| **qwen-asr** | Qwen3-ASR-0.6B, 1.7B | State-of-the-art accuracy, multilingual |
+| **transformers** | Any HuggingFace ASR | Flexibility, distil-whisper |
 
 ## Requirements
 
@@ -18,7 +26,7 @@ A simple push-to-talk voice dictation tool for Linux using faster-whisper. Hold 
 ## Installation
 
 ```bash
-git clone https://github.com/ksred/soupawhisper.git
+git clone https://github.com/arpleasa/soupawhisper.git
 cd soupawhisper
 chmod +x install.sh
 ./install.sh
@@ -43,8 +51,17 @@ sudo dnf install alsa-utils xclip xdotool libnotify
 # Arch
 sudo pacman -S alsa-utils xclip xdotool libnotify
 
-# Then install Python deps
+# Base install (faster-whisper only)
 poetry install
+
+# With Qwen3-ASR support
+poetry install --with qwen
+
+# With HuggingFace transformers support
+poetry install --with transformers
+
+# All backends
+poetry install --with qwen,transformers
 ```
 
 ### GPU Support (Optional)
@@ -67,7 +84,17 @@ compute_type = float16
 ## Usage
 
 ```bash
+# Default (faster-whisper base.en)
 poetry run python dictate.py
+
+# Use Qwen3-ASR
+poetry run python dictate.py --backend qwen-asr --model qwen-1.7b
+
+# Use distil-whisper via transformers
+poetry run python dictate.py --backend transformers --model distil-whisper
+
+# List all available models
+poetry run python dictate.py --list-models
 ```
 
 - Hold **F12** to record
@@ -97,15 +124,21 @@ journalctl --user -u soupawhisper -f    # View logs
 Edit `~/.config/soupawhisper/config.ini`:
 
 ```ini
-[whisper]
-# Model size: tiny.en, base.en, small.en, medium.en, large-v3
+[asr]
+# Backend: faster-whisper, qwen-asr, transformers, or auto
+backend = faster-whisper
+
+# Model name or shortcut
 model = base.en
 
-# Device: cpu or cuda (cuda requires cuDNN)
+# Device: cpu, cuda, cuda:0, etc.
 device = cpu
 
-# Compute type: int8 for CPU, float16 for GPU
+# Compute type for faster-whisper: int8 (cpu) or float16 (gpu)
 compute_type = int8
+
+# Language hint (optional, for Qwen ASR)
+language =
 
 [hotkey]
 # Key to hold for recording: f12, scroll_lock, pause, etc.
@@ -119,10 +152,26 @@ auto_type = true
 notifications = true
 ```
 
+### Model Shortcuts
+
+Use these shortcuts in config or `--model`:
+
+| Shortcut | Backend | Model |
+|----------|---------|-------|
+| `tiny.en` | faster-whisper | tiny.en |
+| `base.en` | faster-whisper | base.en |
+| `small.en` | faster-whisper | small.en |
+| `medium.en` | faster-whisper | medium.en |
+| `large-v3` | faster-whisper | large-v3 |
+| `qwen-0.6b` | qwen-asr | Qwen/Qwen3-ASR-0.6B |
+| `qwen-1.7b` | qwen-asr | Qwen/Qwen3-ASR-1.7B |
+| `distil-whisper` | transformers | distil-whisper/distil-large-v3 |
+| `whisper-turbo` | transformers | openai/whisper-large-v3-turbo |
+
 Create the config directory and file if it doesn't exist:
 ```bash
 mkdir -p ~/.config/soupawhisper
-cp /path/to/soupawhisper/config.example.ini ~/.config/soupawhisper/config.ini
+cp config.example.ini ~/.config/soupawhisper/config.ini
 ```
 
 ## Troubleshooting
@@ -148,7 +197,21 @@ Unable to load any of {libcudnn_ops.so.9...}
 ```
 Install cuDNN 9 (see GPU Support section above) or switch to CPU mode.
 
-## Model Sizes
+**Qwen ASR not found:**
+```bash
+poetry install --with qwen
+# or: pip install qwen-asr
+```
+
+**Transformers not found:**
+```bash
+poetry install --with transformers
+# or: pip install transformers torch
+```
+
+## Model Comparison
+
+### Faster-Whisper Models
 
 | Model | Size | Speed | Accuracy |
 |-------|------|-------|----------|
@@ -158,4 +221,21 @@ Install cuDNN 9 (see GPU Support section above) or switch to CPU mode.
 | medium.en | ~1.5GB | Slower | Great |
 | large-v3 | ~3GB | Slowest | Best |
 
-For dictation, `base.en` or `small.en` is usually the sweet spot.
+### Qwen3-ASR Models
+
+| Model | Size | Languages | Features |
+|-------|------|-----------|----------|
+| Qwen3-ASR-0.6B | ~1.2GB | 52 | Fast, efficient |
+| Qwen3-ASR-1.7B | ~3.4GB | 52 | State-of-the-art accuracy |
+
+Qwen3-ASR supports:
+- 30 languages + 22 Chinese dialects
+- Music/song transcription
+- Noisy environments
+- Auto language detection
+
+For dictation, `base.en` (faster-whisper) or `qwen-0.6b` is usually the sweet spot.
+
+## License
+
+MIT
