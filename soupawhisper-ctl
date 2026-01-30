@@ -38,9 +38,9 @@ set_model() {
     if [[ -f "$CONFIG_FILE" ]]; then
         # Update existing config
         if grep -q "^\[asr\]" "$CONFIG_FILE"; then
-            # Update [asr] section
-            sed -i "s/^backend\s*=.*/backend = $backend/" "$CONFIG_FILE"
-            sed -i "s/^model\s*=.*/model = $model/" "$CONFIG_FILE"
+            # Update [asr] section (use | as delimiter to handle / in model names)
+            sed -i "s|^backend\s*=.*|backend = $backend|" "$CONFIG_FILE"
+            sed -i "s|^model\s*=.*|model = $model|" "$CONFIG_FILE"
         else
             # Add [asr] section if missing (legacy config)
             cat >> "$CONFIG_FILE" << EOF
