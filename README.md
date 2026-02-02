@@ -92,6 +92,23 @@ systemctl --user status soupawhisper    # Status
 journalctl --user -u soupawhisper -f    # View logs
 ```
 
+### Control Panel
+
+A TUI control panel is included for easy management:
+
+```bash
+./soupawhisper-ctl
+```
+
+Features:
+- Start/stop/restart the service
+- Switch Whisper models (tiny → large-v3)
+- Change hotkey (F12, F11, F10, etc.)
+- Enable/disable auto-start
+- View logs
+
+The control panel edits `~/.config/soupawhisper/config.ini` and restarts the service to apply changes.
+
 ## Configuration
 
 Edit `~/.config/soupawhisper/config.ini`:
