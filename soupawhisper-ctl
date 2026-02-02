@@ -48,6 +48,42 @@ set_hotkey() {
     ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 }
 
+detect_key() {
+    echo ""
+    echo "Press any key to detect its name (Ctrl+C to cancel)..."
+    echo ""
+
+    # Use Python with pynput to detect the key
+    detected=$(python3 -c '
+from pynput import keyboard
+
+def on_press(key):
+    if hasattr(key, "name"):
+        print(key.name)
+    elif hasattr(key, "char") and key.char:
+        print(key.char)
+    else:
+        print("unknown")
+    return False
+
+with keyboard.Listener(on_press=on_press) as listener:
+    listener.join()
+' 2>/dev/null)
+
+    if [[ -n "$detected" ]]; then
+        echo "Detected key: $detected"
+        echo ""
+        read -p "Use '$detected' as hotkey? (y/n): " use_it
+        if [[ "$use_it" == "y" || "$use_it" == "Y" ]]; then
+            set_hotkey "$detected"
+            return 0
+        fi
+    else
+        echo "Could not detect key. Make sure pynput is installed."
+    fi
+    return 1
+}
+
 show_hotkey_menu() {
     echo ""
     echo "======== Select Hotkey ========"
@@ -66,7 +102,8 @@ show_hotkey_menu() {
     echo "  7) pause"
     echo "  8) insert"
     echo ""
-    echo "  c) Custom key"
+    echo "  d) Detect key (press any key)"
+    echo "  c) Custom (enter name manually)"
     echo "  b) Back"
     echo ""
 }
@@ -85,6 +122,20 @@ select_hotkey() {
             6) set_hotkey "scroll_lock" ;;
             7) set_hotkey "pause" ;;
             8) set_hotkey "insert" ;;
+            d|D)
+                if detect_key; then
+                    echo ""
+                    echo "Hotkey set to: $(get_current_hotkey)"
+                    echo ""
+                    read -p "Restart service to apply? (y/n): " restart
+                    if [[ "$restart" == "y" || "$restart" == "Y" ]]; then
+                        systemctl --user restart $SERVICE
+                        echo "Service restarted."
+                    fi
+                    return
+                fi
+                continue
+                ;;
             c|C)
                 echo ""
                 echo "Valid key names: f1-f20, scroll_lock, pause, insert, home, end"
