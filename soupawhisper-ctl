@@ -6,7 +6,7 @@ CONFIG_FILE="$HOME/.config/soupawhisper/config.ini"
 
 get_current_model() {
     if [[ -f "$CONFIG_FILE" ]]; then
-        model=$(grep -E "^model\s*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+        model=$(grep -E "^model[ \t]*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
         echo "${model:-base.en}"
     else
         echo "base.en"
@@ -15,7 +15,7 @@ get_current_model() {
 
 get_current_hotkey() {
     if [[ -f "$CONFIG_FILE" ]]; then
-        key=$(grep -E "^key\s*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+        key=$(grep -E "^key[ \t]*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
         echo "${key:-f12}"
     else
         echo "f12"
@@ -25,17 +25,27 @@ get_current_hotkey() {
 set_hotkey() {
     local key="$1"
 
-    if [[ -f "$CONFIG_FILE" ]]; then
-        if grep -q "^\[hotkey\]" "$CONFIG_FILE"; then
-            sed -i "s|^key\s*=.*|key = $key|" "$CONFIG_FILE"
-        else
-            cat >> "$CONFIG_FILE" << EOF
-
-[hotkey]
-key = $key
-EOF
-        fi
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "Config file not found: $CONFIG_FILE"
+        echo "Run install.sh first to create the config."
+        return 1
     fi
+
+    # Use awk to only modify key under [hotkey] section
+    awk -v newkey="$key" '
+        BEGIN { in_hotkey=0; found=0 }
+        /^\[hotkey\]/ { in_hotkey=1; print; next }
+        /^\[/ && !/^\[hotkey\]/ { in_hotkey=0 }
+        in_hotkey && /^key[ \t]*=/ { print "key = " newkey; found=1; next }
+        { print }
+        END {
+            if (!found) {
+                print ""
+                print "[hotkey]"
+                print "key = " newkey
+            }
+        }
+    ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 }
 
 show_hotkey_menu() {
@@ -45,16 +55,16 @@ show_hotkey_menu() {
     echo "  Current: $(get_current_hotkey)"
     echo ""
     echo "  --- Function Keys ---"
-    echo "  1) F12  (default)"
-    echo "  2) F11"
-    echo "  3) F10"
-    echo "  4) F9"
-    echo "  5) F8"
+    echo "  1) f12  (default)"
+    echo "  2) f11"
+    echo "  3) f10"
+    echo "  4) f9"
+    echo "  5) f8"
     echo ""
     echo "  --- Special Keys ---"
-    echo "  6) Scroll Lock"
-    echo "  7) Pause"
-    echo "  8) Insert"
+    echo "  6) scroll_lock"
+    echo "  7) pause"
+    echo "  8) insert"
     echo ""
     echo "  c) Custom key"
     echo "  b) Back"
@@ -77,7 +87,9 @@ select_hotkey() {
             8) set_hotkey "insert" ;;
             c|C)
                 echo ""
-                read -p "Enter key name (e.g., f7, home, end): " custom_key
+                echo "Valid key names: f1-f20, scroll_lock, pause, insert, home, end"
+                echo "Or single characters like: - = [ ] etc."
+                read -p "Enter key name: " custom_key
                 if [[ -n "$custom_key" ]]; then
                     set_hotkey "$custom_key"
                 else
@@ -104,9 +116,19 @@ select_hotkey() {
 set_model() {
     local model="$1"
 
-    if [[ -f "$CONFIG_FILE" ]]; then
-        sed -i "s|^model\s*=.*|model = $model|" "$CONFIG_FILE"
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "Config file not found: $CONFIG_FILE"
+        return 1
     fi
+
+    # Use awk to only modify model under [whisper] section
+    awk -v newmodel="$model" '
+        BEGIN { in_whisper=0 }
+        /^\[whisper\]/ { in_whisper=1; print; next }
+        /^\[/ && !/^\[whisper\]/ { in_whisper=0 }
+        in_whisper && /^model[ \t]*=/ { print "model = " newmodel; next }
+        { print }
+    ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 }
 
 show_status() {
