@@ -102,8 +102,8 @@ A TUI control panel is included for easy management:
 
 Features:
 - Start/stop/restart the service
-- Switch Whisper models (tiny → large-v3)
-- Change hotkey (F12, F11, F10, etc.)
+- Switch Whisper models (standard + distilled)
+- Change hotkey (F12, F11, or detect any key)
 - Enable/disable auto-start
 - View logs
 
