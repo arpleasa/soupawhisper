@@ -53,6 +53,9 @@ detect_key() {
     echo "Press any key to detect its name (Ctrl+C to cancel)..."
     echo ""
 
+    # Disable terminal echo to prevent key from being displayed
+    stty -echo 2>/dev/null
+
     # Create temp script
     local temp_script=$(mktemp)
     cat > "$temp_script" << 'PYTHON'
@@ -90,6 +93,9 @@ PYTHON
     detected=$("$python_cmd" "$temp_script" 2>/dev/null)
     rm -f "$temp_script"
 
+    # Re-enable terminal echo
+    stty echo 2>/dev/null
+
     # Trim whitespace/newlines
     detected=$(echo "$detected" | tr -d '\n\r' | xargs)
 
@@ -97,7 +103,6 @@ PYTHON
         # Flush any buffered input (the detected key may have been typed to stdin)
         read -t 0.1 -n 10000 discard 2>/dev/null || true
 
-        echo ""
         echo "Detected key: $detected"
         echo ""
         read -p "Use '$detected' as hotkey? (y/n): " use_it
@@ -222,11 +227,17 @@ show_model_menu() {
     echo ""
     echo "  Current: $(get_current_model)"
     echo ""
+    echo "  --- Standard Models ---"
     echo "  1) tiny.en     (fastest, ~75MB)"
     echo "  2) base.en     (fast, good quality)"
     echo "  3) small.en    (medium speed, better)"
     echo "  4) medium.en   (slower, great)"
     echo "  5) large-v3    (slowest, best)"
+    echo ""
+    echo "  --- Distilled Models (faster, near-original quality) ---"
+    echo "  6) distil-large-v3   (2x faster than large-v3)"
+    echo "  7) distil-large-v2   (2x faster than large-v2)"
+    echo "  8) large-v3-turbo    (4x faster, great quality)"
     echo ""
     echo "  b) Back"
     echo ""
@@ -243,6 +254,9 @@ select_model() {
             3) set_model "small.en" ;;
             4) set_model "medium.en" ;;
             5) set_model "large-v3" ;;
+            6) set_model "Systran/faster-distil-whisper-large-v3" ;;
+            7) set_model "Systran/faster-distil-whisper-large-v2" ;;
+            8) set_model "deepdml/faster-whisper-large-v3-turbo-ct2" ;;
             b|B) return ;;
             *) echo "Invalid option."; continue ;;
         esac
