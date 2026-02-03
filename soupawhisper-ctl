@@ -90,7 +90,14 @@ PYTHON
     detected=$("$python_cmd" "$temp_script" 2>/dev/null)
     rm -f "$temp_script"
 
+    # Trim whitespace/newlines
+    detected=$(echo "$detected" | tr -d '\n\r' | xargs)
+
     if [[ -n "$detected" ]]; then
+        # Flush any buffered input (the detected key may have been typed to stdin)
+        read -t 0.1 -n 10000 discard 2>/dev/null || true
+
+        echo ""
         echo "Detected key: $detected"
         echo ""
         read -p "Use '$detected' as hotkey? (y/n): " use_it
