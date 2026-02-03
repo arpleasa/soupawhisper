@@ -53,22 +53,42 @@ detect_key() {
     echo "Press any key to detect its name (Ctrl+C to cancel)..."
     echo ""
 
-    # Use Python with pynput to detect the key
-    detected=$(python3 -c '
+    # Create temp script
+    local temp_script=$(mktemp)
+    cat > "$temp_script" << 'PYTHON'
 from pynput import keyboard
+import sys
 
 def on_press(key):
     if hasattr(key, "name"):
-        print(key.name)
+        print(key.name, flush=True)
     elif hasattr(key, "char") and key.char:
-        print(key.char)
+        print(key.char, flush=True)
     else:
-        print("unknown")
+        print("unknown", flush=True)
     return False
 
 with keyboard.Listener(on_press=on_press) as listener:
     listener.join()
-' 2>/dev/null)
+PYTHON
+
+    # Try to find a Python with pynput installed
+    local python_cmd=""
+    local service_file="$HOME/.config/systemd/user/soupawhisper.service"
+
+    # Extract Python path from systemd service file (most reliable)
+    if [[ -f "$service_file" ]]; then
+        python_cmd=$(grep ExecStart "$service_file" | sed 's/ExecStart=//' | awk '{print $1}')
+    fi
+
+    # Fallback to system python
+    if [[ -z "$python_cmd" || ! -x "$python_cmd" ]]; then
+        python_cmd="python3"
+    fi
+
+    # Run the detection script
+    detected=$("$python_cmd" "$temp_script" 2>/dev/null)
+    rm -f "$temp_script"
 
     if [[ -n "$detected" ]]; then
         echo "Detected key: $detected"
@@ -79,7 +99,8 @@ with keyboard.Listener(on_press=on_press) as listener:
             return 0
         fi
     else
-        echo "Could not detect key. Make sure pynput is installed."
+        echo "Could not detect key."
+        echo "Make sure soupawhisper is installed (pynput required)."
     fi
     return 1
 }
