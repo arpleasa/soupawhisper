@@ -167,6 +167,7 @@ Install cuDNN 9 (see GPU Support section above) or switch to CPU mode.
 
 ## Model Sizes
 
+### Standard Models
 | Model | Size | Speed | Accuracy |
 |-------|------|-------|----------|
 | tiny.en | ~75MB | Fastest | Basic |
@@ -175,4 +176,11 @@ Install cuDNN 9 (see GPU Support section above) or switch to CPU mode.
 | medium.en | ~1.5GB | Slower | Great |
 | large-v3 | ~3GB | Slowest | Best |
 
-For dictation, `base.en` or `small.en` is usually the sweet spot.
+### Distilled Models (Recommended)
+| Model | Speed vs large-v3 | Accuracy |
+|-------|-------------------|----------|
+| distil-large-v3 | ~2x faster | ~99% of large-v3 |
+| distil-large-v2 | ~2x faster | ~99% of large-v2 |
+| large-v3-turbo | ~4x faster | ~97% of large-v3 |
+
+Distilled models offer near-original quality with significantly better speed. For dictation with GPU, `large-v3-turbo` or `distil-large-v3` are excellent choices. For CPU or low VRAM, `small.en` or `base.en` work well.
