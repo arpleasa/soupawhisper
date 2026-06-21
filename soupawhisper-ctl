@@ -239,6 +239,10 @@ show_model_menu() {
     echo "  7) distil-large-v2   (2x faster than large-v2)"
     echo "  8) large-v3-turbo    (4x faster, great quality)"
     echo ""
+    echo "  --- Cloud (Groq API — no GPU needed, requires internet) ---"
+    echo "  9)  groq large-v3-turbo  (cloud, fastest)"
+    echo "  10) groq large-v3        (cloud, most accurate)"
+    echo ""
     echo "  b) Back"
     echo ""
 }
@@ -257,6 +261,8 @@ select_model() {
             6) set_model "Systran/faster-distil-whisper-large-v3" ;;
             7) set_model "Systran/faster-distil-whisper-large-v2" ;;
             8) set_model "deepdml/faster-whisper-large-v3-turbo-ct2" ;;
+            9) set_model "groq:whisper-large-v3-turbo" ;;
+            10) set_model "groq:whisper-large-v3" ;;
             b|B) return ;;
             *) echo "Invalid option."; continue ;;
         esac

@@ -71,6 +71,26 @@ COMPUTE_TYPE = CONFIG["compute_type"]
 AUTO_TYPE = CONFIG["auto_type"]
 NOTIFICATIONS = CONFIG["notifications"]
 
+# Groq cloud backend: selected when the model value is "groq:<model-name>"
+# (e.g. "groq:whisper-large-v3-turbo"). Cloud transcription needs no local GPU.
+GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+USE_GROQ = MODEL_SIZE.startswith("groq:")
+GROQ_MODEL = MODEL_SIZE.split(":", 1)[1] if USE_GROQ else None
+
+
+def load_groq_api_key():
+    """Resolve GROQ_API_KEY from the environment or PAI's SdkAgents .env."""
+    key = os.environ.get("GROQ_API_KEY")
+    if key:
+        return key.strip()
+    env_path = Path.home() / ".claude" / "Skills" / "SdkAgents" / "data" / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("GROQ_API_KEY="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
 
 class Dictation:
     def __init__(self):
@@ -78,15 +98,31 @@ class Dictation:
         self.record_process = None
         self.temp_file = None
         self.model = None
+        self.use_groq = False
+        self.groq_api_key = None
         self.model_loaded = threading.Event()
         self.model_error = None
         self.running = True
 
-        # Load model in background
-        print(f"Loading Whisper model ({MODEL_SIZE})...")
+        # Initialize backend in background
+        print(f"Initializing backend ({MODEL_SIZE})...")
         threading.Thread(target=self._load_model, daemon=True).start()
 
     def _load_model(self):
+        if USE_GROQ:
+            self.use_groq = True
+            self.groq_api_key = load_groq_api_key()
+            hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
+            if not self.groq_api_key:
+                self.model_error = "GROQ_API_KEY not found (env or ~/.claude/Skills/SdkAgents/data/.env)"
+                self.model_loaded.set()
+                print(f"Failed to init Groq backend: {self.model_error}")
+                return
+            self.model_loaded.set()
+            print(f"Using Groq cloud transcription ({GROQ_MODEL}). Ready for dictation!")
+            print(f"Hold [{hotkey_name}] to record, release to transcribe.")
+            print("Press Ctrl+C to quit.")
+            return
         try:
             self.model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
             self.model_loaded.set()
@@ -100,6 +136,21 @@ class Dictation:
             print(f"Failed to load model: {e}")
             if "cudnn" in str(e).lower() or "cuda" in str(e).lower():
                 print("Hint: Try setting device = cpu in your config, or install cuDNN.")
+
+    def _transcribe_groq(self, wav_path):
+        """Transcribe a WAV file via Groq's hosted Whisper API."""
+        import requests
+
+        with open(wav_path, "rb") as f:
+            resp = requests.post(
+                GROQ_API_URL,
+                headers={"Authorization": f"Bearer {self.groq_api_key}"},
+                files={"file": (os.path.basename(wav_path), f, "audio/wav")},
+                data={"model": GROQ_MODEL, "response_format": "text", "temperature": "0"},
+                timeout=60,
+            )
+        resp.raise_for_status()
+        return resp.text.strip()
 
     def notify(self, title, message, icon="dialog-information", timeout=2000):
         """Send a desktop notification."""
@@ -167,13 +218,15 @@ class Dictation:
 
         # Transcribe
         try:
-            segments, info = self.model.transcribe(
-                self.temp_file.name,
-                beam_size=5,
-                vad_filter=True,
-            )
-
-            text = " ".join(segment.text.strip() for segment in segments)
+            if self.use_groq:
+                text = self._transcribe_groq(self.temp_file.name)
+            else:
+                segments, info = self.model.transcribe(
+                    self.temp_file.name,
+                    beam_size=5,
+                    vad_filter=True,
+                )
+                text = " ".join(segment.text.strip() for segment in segments)
 
             if text:
                 # Copy to clipboard using xclip
