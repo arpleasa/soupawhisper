@@ -132,6 +132,9 @@ key = f12
 # Type text into active input field
 auto_type = true
 
+# Copy transcription to clipboard (set false to type only, leaving clipboard untouched)
+copy_to_clipboard = true
+
 # Show desktop notification
 notifications = true
 ```
@@ -184,3 +187,22 @@ Install cuDNN 9 (see GPU Support section above) or switch to CPU mode.
 | large-v3-turbo | ~4x faster | ~97% of large-v3 |
 
 Distilled models offer near-original quality with significantly better speed. For dictation with GPU, `large-v3-turbo` or `distil-large-v3` are excellent choices. For CPU or low VRAM, `small.en` or `base.en` work well.
+
+## Groq Cloud Backend
+
+For cloud-based transcription without local GPU or model downloads, use Groq's hosted Whisper API.
+
+Set the model to `groq:<model-name>` in your config:
+
+```ini
+[whisper]
+model = groq:whisper-large-v3-turbo
+```
+
+Requires `GROQ_API_KEY` in your environment. Falls back to reading from `~/.claude/Skills/SdkAgents/data/.env` if the env var is unset.
+
+Available Groq models:
+- `whisper-large-v3-turbo` - fast, high quality
+- `whisper-large-v3` - highest accuracy
+
+Audio is sent to Groq's API for transcription. No local compute needed.

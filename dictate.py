@@ -33,6 +33,7 @@ def load_config():
         "compute_type": "int8",
         "key": "f12",
         "auto_type": "true",
+        "copy_to_clipboard": "true",
         "notifications": "true",
     }
 
@@ -45,6 +46,7 @@ def load_config():
         "compute_type": config.get("whisper", "compute_type", fallback=defaults["compute_type"]),
         "key": config.get("hotkey", "key", fallback=defaults["key"]),
         "auto_type": config.getboolean("behavior", "auto_type", fallback=True),
+        "copy_to_clipboard": config.getboolean("behavior", "copy_to_clipboard", fallback=True),
         "notifications": config.getboolean("behavior", "notifications", fallback=True),
     }
 
@@ -69,6 +71,7 @@ MODEL_SIZE = CONFIG["model"]
 DEVICE = CONFIG["device"]
 COMPUTE_TYPE = CONFIG["compute_type"]
 AUTO_TYPE = CONFIG["auto_type"]
+COPY_TO_CLIPBOARD = CONFIG["copy_to_clipboard"]
 NOTIFICATIONS = CONFIG["notifications"]
 
 # Groq cloud backend: selected when the model value is "groq:<model-name>"
@@ -230,18 +233,20 @@ class Dictation:
 
             if text:
                 # Copy to clipboard using xclip
-                process = subprocess.Popen(
-                    ["xclip", "-selection", "clipboard"],
-                    stdin=subprocess.PIPE
-                )
-                process.communicate(input=text.encode())
+                if COPY_TO_CLIPBOARD:
+                    process = subprocess.Popen(
+                        ["xclip", "-selection", "clipboard"],
+                        stdin=subprocess.PIPE
+                    )
+                    process.communicate(input=text.encode())
 
                 # Type it into the active input field
                 if AUTO_TYPE:
                     subprocess.run(["xdotool", "type", "--clearmodifiers", text])
 
-                print(f"Copied: {text}")
-                self.notify("Copied!", text[:100] + ("..." if len(text) > 100 else ""), "emblem-ok-symbolic", 3000)
+                action = "Copied" if COPY_TO_CLIPBOARD else "Typed"
+                print(f"{action}: {text}")
+                self.notify(f"{action}!", text[:100] + ("..." if len(text) > 100 else ""), "emblem-ok-symbolic", 3000)
             else:
                 print("No speech detected")
                 self.notify("No speech detected", "Try speaking louder", "dialog-warning", 2000)
@@ -279,7 +284,11 @@ def check_dependencies():
     """Check that required system commands are available."""
     missing = []
 
-    for cmd in ["arecord", "xclip"]:
+    required = ["arecord"]
+    if COPY_TO_CLIPBOARD:
+        required.append("xclip")
+
+    for cmd in required:
         if subprocess.run(["which", cmd], capture_output=True).returncode != 0:
             pkg = "alsa-utils" if cmd == "arecord" else cmd
             missing.append((cmd, pkg))
