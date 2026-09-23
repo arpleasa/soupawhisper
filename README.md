@@ -104,7 +104,7 @@ soupawhisper-ctl
 
 Features:
 - Start/stop/restart the service
-- Switch models (standard, distilled, Groq cloud, Voxtral cloud and local)
+- Switch models (standard, distilled, Groq cloud, Voxtral cloud)
 - Change hotkey (F12, F11, or detect any key)
 - Enable/disable auto-start
 - View logs
@@ -137,7 +137,7 @@ Edit `~/.config/soupawhisper/config.ini`:
 ```ini
 [whisper]
 # Model size: tiny.en, base.en, small.en, medium.en, large-v3
-# Or a backend prefix: groq:..., voxtral:..., voxtral-local:... (see the backend sections below)
+# Or a cloud backend prefix: groq:..., voxtral:... (see the backend sections below)
 model = base.en
 
 # Device: cpu or cuda (cuda requires cuDNN)
@@ -245,32 +245,3 @@ model = voxtral:voxtral-mini-2602
 Requires `MISTRAL_API_KEY` in your environment. Falls back to reading a `MISTRAL_API_KEY=...` line from `~/.config/soupawhisper/.env` if the env var is unset.
 
 Audio is sent to Mistral's API for transcription. No local compute needed.
-
-## Voxtral Local Backend (GGUF, offline)
-
-Fully offline transcription using a quantized Voxtral Mini 3B model via [voxtral.cpp](https://github.com/andrijdavid/voxtral.cpp), a ggml-based C++ implementation. No API key and no network call; runs on your own GPU (or CPU).
-
-**Setup:**
-
-```bash
-git clone https://github.com/andrijdavid/voxtral.cpp.git ~/tools/voxtral.cpp
-cd ~/tools/voxtral.cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON   # drop -DGGML_CUDA=ON if you have no NVIDIA GPU
-cmake --build build -j
-./tools/download_model.sh Q4_K_M --model mini   # ~3GB download
-```
-
-`cmake` needs CUDA (`nvcc`) on PATH for GPU acceleration; if you don't have `cmake` installed system-wide, `uv tool install cmake` gets you one without root.
-
-Set the model to `voxtral-local:<path-to-gguf>` in your config, and point `voxtral_binary` at the built binary if it isn't on your `PATH`. Setting `voxtral_local_model` lets `soupawhisper-ctl` and the tray offer "Voxtral local" in their model menus:
-
-```ini
-[whisper]
-model = voxtral-local:/home/you/tools/voxtral.cpp/models/voxtral-3b/Q4_K_M.gguf
-voxtral_binary = /home/you/tools/voxtral.cpp/build/voxtral
-voxtral_local_model = /home/you/tools/voxtral.cpp/models/voxtral-3b/Q4_K_M.gguf
-```
-
-The voxtral.cpp CLI loads the model for every clip, so each dictation pays a few seconds of load time. On a 6GB laptop GPU (RTX 4050) with Q4_K_M, an 8-second clip took about 8 seconds end to end; a CPU-only build is roughly 9x slower than real time and only practical for short clips.
-
-**CUDA crash in voxtral.cpp:** as of voxtral.cpp commit `b2b2397`, CUDA builds segfault at the start of every transcription. `clear_kv_cache()` and `kv_cache_shift_left()` in `src/voxtral.cpp` call `memset`/`memmove` on `ggml_get_data()` pointers, which are GPU device pointers when the KV cache lives on CUDA. Replacing those calls with `ggml_backend_tensor_memset()` / `ggml_backend_tensor_get()` / `ggml_backend_tensor_set()` fixes it. Until that lands upstream, patch those two functions or build without `-DGGML_CUDA=ON`.

@@ -44,7 +44,6 @@ MODELS = [
     ("Groq large-v3 (cloud)", "groq:whisper-large-v3"),
     ("Voxtral (Mistral cloud)", "voxtral:voxtral-mini-2602"),
 ]
-VOXTRAL_LOCAL_LABEL = "Voxtral local (GGUF)"
 HOTKEYS = ["f12", "f11", "f10", "f9", "scroll_lock", "pause"]
 
 
@@ -124,14 +123,6 @@ def _write_atomic(path, lines):
     os.replace(tmp, path)
 
 
-def voxtral_local_value(path=CONFIG_PATH):
-    """The `voxtral-local:<gguf>` model value if a usable GGUF is configured."""
-    gguf = read_config_value(path, "whisper", "voxtral_local_model")
-    if gguf and Path(gguf).is_file():
-        return f"voxtral-local:{gguf}"
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Service helpers (no GTK)
 # ---------------------------------------------------------------------------
@@ -162,7 +153,6 @@ def snapshot():
         service_enabled(),
         read_config_value(CONFIG_PATH, "whisper", "model", "base.en"),
         read_config_value(CONFIG_PATH, "hotkey", "key", "f12"),
-        voxtral_local_value(),
     )
 
 
@@ -217,13 +207,13 @@ def main():
             return True  # keep polling
 
         def status_text(self):
-            state, _, model, key, _ = self.state
+            state, _, model, key = self.state
             word = {"active": "running", "inactive": "stopped"}.get(state, state)
             return f"Dictation {word} \u00b7 {model_label(model)} \u00b7 {hotkey_label(key)}"
 
         def build_menu(self):
             self.building = True
-            state, enabled, model, key, voxtral_local = self.state
+            state, enabled, model, key = self.state
             menu = Gtk.Menu()
 
             header = Gtk.MenuItem(label=self.status_text())
@@ -244,7 +234,7 @@ def main():
             menu.append(Gtk.SeparatorMenuItem())
 
             menu.append(self.radio_submenu(
-                "Model", self.model_entries(model, voxtral_local), model,
+                "Model", self.model_entries(model), model,
                 lambda value: self.set_and_restart("whisper", "model", value)))
             hotkeys = HOTKEYS if key in HOTKEYS else HOTKEYS + [key]
             menu.append(self.radio_submenu(
@@ -276,11 +266,8 @@ def main():
             self.indicator.set_menu(menu)
             self.building = False
 
-        def model_entries(self, current, voxtral_local):
+        def model_entries(self, current):
             entries = [None if m is None else (m[0], m[1], True) for m in MODELS]
-            entries.append((VOXTRAL_LOCAL_LABEL + ("" if voxtral_local else
-                            " \u2014 set voxtral_local_model"),
-                            voxtral_local or "voxtral-local:", bool(voxtral_local)))
             known = {e[1] for e in entries if e}
             if current not in known:
                 entries += [None, (f"Custom: {current}", current, True)]
@@ -336,8 +323,6 @@ def model_label(value):
     for m in MODELS:
         if m and m[1] == value:
             return m[0]
-    if value.startswith("voxtral-local:"):
-        return VOXTRAL_LOCAL_LABEL
     return value
 
 
