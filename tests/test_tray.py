@@ -1,6 +1,7 @@
 """Tests for soupawhisper-tray's config helpers (no GTK or display needed).
 
-Run: python3 -m unittest discover -s tests
+Run all tests: poetry run python -m unittest discover -s tests
+(this file alone also runs on system python3: python3 -m unittest tests.test_tray)
 """
 
 import importlib.machinery

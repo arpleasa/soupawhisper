@@ -245,3 +245,5 @@ model = voxtral:voxtral-mini-2602
 Requires `MISTRAL_API_KEY` in your environment. Falls back to reading a `MISTRAL_API_KEY=...` line from `~/.config/soupawhisper/.env` if the env var is unset.
 
 Audio is sent to Mistral's API for transcription. No local compute needed.
+
+If either cloud API answers HTTP 429 (rate limited), the request is retried up to twice (after 1s, then 2s; if the server sends Retry-After, that wait is used instead, capped at 5s) before the dictation fails.

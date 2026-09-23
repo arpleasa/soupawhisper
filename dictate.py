@@ -99,6 +99,38 @@ USE_VOXTRAL_CLOUD = MODEL_SIZE.startswith("voxtral:")
 VOXTRAL_MODEL = MODEL_SIZE.split(":", 1)[1] if USE_VOXTRAL_CLOUD else None
 
 
+# Retry schedule for HTTP 429 (rate limited) from the cloud backends: wait this
+# many seconds before each retry, unless the server sends a shorter Retry-After.
+RATE_LIMIT_RETRY_DELAYS = (1.0, 2.0)
+MAX_RETRY_AFTER = 5.0
+
+
+def post_audio_with_retry(url, api_key, wav_path, data, sleep=time.sleep):
+    """POST a WAV file as multipart form data. On HTTP 429, retry up to
+    len(RATE_LIMIT_RETRY_DELAYS) times; any other error is raised at once."""
+    import requests
+
+    for attempt in range(len(RATE_LIMIT_RETRY_DELAYS) + 1):
+        with open(wav_path, "rb") as f:
+            resp = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (os.path.basename(wav_path), f, "audio/wav")},
+                data=data,
+                timeout=60,
+            )
+        if resp.status_code != 429 or attempt == len(RATE_LIMIT_RETRY_DELAYS):
+            resp.raise_for_status()
+            return resp
+        delay = RATE_LIMIT_RETRY_DELAYS[attempt]
+        try:
+            delay = min(float(resp.headers.get("Retry-After", delay)), MAX_RETRY_AFTER)
+        except ValueError:
+            pass  # Retry-After can also be an HTTP date; keep the default delay
+        print(f"Rate limited (HTTP 429), retrying in {delay:.1f}s...")
+        sleep(delay)
+
+
 def load_groq_api_key():
     """Resolve GROQ_API_KEY from the environment, or from
     ~/.config/soupawhisper/.env as a fallback."""
@@ -191,32 +223,19 @@ class Dictation:
 
     def _transcribe_groq(self, wav_path):
         """Transcribe a WAV file via Groq's hosted Whisper API."""
-        import requests
-
-        with open(wav_path, "rb") as f:
-            resp = requests.post(
-                GROQ_API_URL,
-                headers={"Authorization": f"Bearer {self.groq_api_key}"},
-                files={"file": (os.path.basename(wav_path), f, "audio/wav")},
-                data={"model": GROQ_MODEL, "response_format": "text", "temperature": "0"},
-                timeout=60,
-            )
-        resp.raise_for_status()
+        resp = post_audio_with_retry(
+            GROQ_API_URL,
+            self.groq_api_key,
+            wav_path,
+            {"model": GROQ_MODEL, "response_format": "text", "temperature": "0"},
+        )
         return resp.text.strip()
 
     def _transcribe_voxtral_cloud(self, wav_path):
         """Transcribe a WAV file via Mistral's hosted Voxtral API."""
-        import requests
-
-        with open(wav_path, "rb") as f:
-            resp = requests.post(
-                VOXTRAL_API_URL,
-                headers={"Authorization": f"Bearer {self.mistral_api_key}"},
-                files={"file": (os.path.basename(wav_path), f, "audio/wav")},
-                data={"model": VOXTRAL_MODEL},
-                timeout=60,
-            )
-        resp.raise_for_status()
+        resp = post_audio_with_retry(
+            VOXTRAL_API_URL, self.mistral_api_key, wav_path, {"model": VOXTRAL_MODEL}
+        )
         return resp.json()["text"].strip()
 
     def notify(self, title, message, icon="dialog-information", timeout=2000):
