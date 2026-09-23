@@ -114,7 +114,7 @@ The control panel edits `~/.config/soupawhisper/config.ini` and restarts the ser
 
 ### Tray Icon
 
-`soupawhisper-tray` puts a microphone icon in the top bar. The icon shows whether dictation is running, and its menu has:
+`soupawhisper-tray` puts a soup bowl icon in the top bar: steaming while dictation is running, plain and dimmed when it is stopped. Its menu has:
 
 - Status line (running/stopped, current model, hotkey)
 - Start / Stop / Restart

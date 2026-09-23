@@ -25,8 +25,11 @@ SERVICE = "soupawhisper"
 POLL_SECONDS = 2
 EXIT_MISSING_APPINDICATOR = 3  # the systemd unit does not restart on this code
 
-ICON_RUNNING = "audio-input-microphone-symbolic"
-ICON_STOPPED = "microphone-disabled-symbolic"
+# Soup bowl icons shipped in icons/ (steam = dictation running). Named
+# *-symbolic so the panel recolors them like its other icons.
+ICON_DIR = Path(__file__).resolve().parent / "icons"
+ICON_RUNNING = "soupawhisper-running-symbolic"
+ICON_STOPPED = "soupawhisper-stopped-symbolic"
 
 # (label, model value). None marks a separator. Mirrors soupawhisper-ctl's menu.
 MODELS = [
@@ -197,6 +200,7 @@ def main():
                 ICON_STOPPED,
                 AppIndicator.IndicatorCategory.APPLICATION_STATUS,
             )
+            self.indicator.set_icon_theme_path(str(ICON_DIR))
             self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
             self.indicator.set_title("SoupaWhisper")
             self.refresh()
