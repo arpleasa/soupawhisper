@@ -1,0 +1,345 @@
+#!/usr/bin/python3
+"""SoupaWhisper tray control.
+
+A system-tray icon for the soupawhisper systemd user service: the icon shows
+whether dictation is running, and its menu starts/stops/restarts the service,
+switches model and hotkey, toggles auto-start, and opens logs or the config.
+
+Runs on the system python3 because it needs PyGObject (python3-gi). It does
+not import faster-whisper; it only edits config.ini and calls systemctl.
+Requires Ayatana AppIndicator (apt: gir1.2-ayatanaappindicator3-0.1). The
+desktop shell draws the menu and reports which item was clicked. There is no
+Gtk.StatusIcon fallback: under GNOME's legacy-tray proxy a stray click reached
+the first Model submenu item and switched the model without a deliberate click.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+CONFIG_PATH = Path.home() / ".config" / "soupawhisper" / "config.ini"
+SERVICE = "soupawhisper"
+POLL_SECONDS = 2
+EXIT_MISSING_APPINDICATOR = 3  # the systemd unit does not restart on this code
+
+ICON_RUNNING = "audio-input-microphone-symbolic"
+ICON_STOPPED = "microphone-disabled-symbolic"
+
+# (label, model value). None marks a separator. Mirrors soupawhisper-ctl's menu.
+MODELS = [
+    ("tiny.en", "tiny.en"),
+    ("base.en", "base.en"),
+    ("small.en", "small.en"),
+    ("medium.en", "medium.en"),
+    ("large-v3", "large-v3"),
+    None,
+    ("distil-large-v3", "Systran/faster-distil-whisper-large-v3"),
+    ("distil-large-v2", "Systran/faster-distil-whisper-large-v2"),
+    ("large-v3-turbo", "deepdml/faster-whisper-large-v3-turbo-ct2"),
+    None,
+    ("Groq large-v3-turbo (cloud)", "groq:whisper-large-v3-turbo"),
+    ("Groq large-v3 (cloud)", "groq:whisper-large-v3"),
+    ("Voxtral (Mistral cloud)", "voxtral:voxtral-mini-2602"),
+]
+VOXTRAL_LOCAL_LABEL = "Voxtral local (GGUF)"
+HOTKEYS = ["f12", "f11", "f10", "f9", "scroll_lock", "pause"]
+
+
+# ---------------------------------------------------------------------------
+# Config helpers (no GTK). Section-aware line edits so comments and unrelated
+# keys survive, same contract as soupawhisper-ctl's awk editing.
+# ---------------------------------------------------------------------------
+
+def _is_section_header(line):
+    s = line.strip()
+    return s.startswith("[") and s.endswith("]")
+
+
+def _key_of(line):
+    """Return the key name if the line is an active `key = value` line."""
+    s = line.strip()
+    if not s or s[0] in "#;" or "=" not in s or _is_section_header(s):
+        return None
+    return s.split("=", 1)[0].strip()
+
+
+def read_config_value(path, section, key, default=None):
+    path = Path(path)
+    if not path.exists():
+        return default
+    current = None
+    for line in path.read_text().splitlines():
+        if _is_section_header(line):
+            current = line.strip()[1:-1].strip()
+            continue
+        if current == section and _key_of(line) == key:
+            return line.split("=", 1)[1].strip()
+    return default
+
+
+def set_config_value(path, section, key, value):
+    """Set [section] key = value, replacing the existing line or inserting it
+    at the end of the section (the section is appended if missing)."""
+    path = Path(path)
+    lines = path.read_text().splitlines() if path.exists() else []
+    new_line = f"{key} = {value}"
+
+    current = None
+    section_start = None  # index of the section header
+    section_last_content = None  # last non-blank line inside the section
+    for i, line in enumerate(lines):
+        if _is_section_header(line):
+            current = line.strip()[1:-1].strip()
+            if current == section:
+                section_start = i
+                section_last_content = i
+            continue
+        if current == section:
+            if _key_of(line) == key:
+                lines[i] = new_line
+                _write_atomic(path, lines)
+                return
+            if line.strip():
+                section_last_content = i
+
+    if section_start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += [f"[{section}]", new_line]
+    else:
+        lines.insert(section_last_content + 1, new_line)
+    _write_atomic(path, lines)
+
+
+def _write_atomic(path, lines):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config.ini.")
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def voxtral_local_value(path=CONFIG_PATH):
+    """The `voxtral-local:<gguf>` model value if a usable GGUF is configured."""
+    gguf = read_config_value(path, "whisper", "voxtral_local_model")
+    if gguf and Path(gguf).is_file():
+        return f"voxtral-local:{gguf}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Service helpers (no GTK)
+# ---------------------------------------------------------------------------
+
+def systemctl(*args):
+    return subprocess.run(
+        ["systemctl", "--user", *args], capture_output=True, text=True
+    )
+
+
+def service_state():
+    return systemctl("is-active", SERVICE).stdout.strip() or "unknown"
+
+
+def service_enabled():
+    return systemctl("is-enabled", SERVICE).stdout.strip() == "enabled"
+
+
+def restart_if_running():
+    if service_state() == "active":
+        systemctl("restart", SERVICE)
+
+
+def snapshot():
+    """Everything the icon and menu depend on; the UI rebuilds when it changes."""
+    return (
+        service_state(),
+        service_enabled(),
+        read_config_value(CONFIG_PATH, "whisper", "model", "base.en"),
+        read_config_value(CONFIG_PATH, "hotkey", "key", "f12"),
+        voxtral_local_value(),
+    )
+
+
+def open_terminal(command):
+    if shutil.which("gnome-terminal"):
+        subprocess.Popen(["gnome-terminal", "--", *command])
+    elif shutil.which("x-terminal-emulator"):
+        subprocess.Popen(["x-terminal-emulator", "-e", " ".join(command)])
+
+
+# ---------------------------------------------------------------------------
+# GTK UI
+# ---------------------------------------------------------------------------
+
+def main():
+    import gi
+
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import GLib, Gtk
+
+    try:
+        gi.require_version("AyatanaAppIndicator3", "0.1")
+        from gi.repository import AyatanaAppIndicator3 as AppIndicator
+    except (ValueError, ImportError):
+        print("soupawhisper-tray needs Ayatana AppIndicator. Install it with:\n"
+              "  sudo apt install gir1.2-ayatanaappindicator3-0.1", file=sys.stderr)
+        return EXIT_MISSING_APPINDICATOR
+
+    class Tray:
+        def __init__(self):
+            self.state = None
+            self.building = False
+            self.indicator = AppIndicator.Indicator.new(
+                "soupawhisper",
+                ICON_STOPPED,
+                AppIndicator.IndicatorCategory.APPLICATION_STATUS,
+            )
+            self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+            self.indicator.set_title("SoupaWhisper")
+            self.refresh()
+            GLib.timeout_add_seconds(POLL_SECONDS, self.refresh)
+
+        # -- state -> UI ----------------------------------------------------
+        def refresh(self):
+            snap = snapshot()
+            if snap != self.state:
+                self.state = snap
+                running = snap[0] == "active"
+                icon = ICON_RUNNING if running else ICON_STOPPED
+                self.indicator.set_icon_full(icon, self.status_text())
+                self.build_menu()
+            return True  # keep polling
+
+        def status_text(self):
+            state, _, model, key, _ = self.state
+            word = {"active": "running", "inactive": "stopped"}.get(state, state)
+            return f"Dictation {word} \u00b7 {model_label(model)} \u00b7 {hotkey_label(key)}"
+
+        def build_menu(self):
+            self.building = True
+            state, enabled, model, key, voxtral_local = self.state
+            menu = Gtk.Menu()
+
+            header = Gtk.MenuItem(label=self.status_text())
+            header.set_sensitive(False)
+            menu.append(header)
+            menu.append(Gtk.SeparatorMenuItem())
+
+            running = state == "active"
+            for label, action, sensitive in (
+                ("Start", "start", not running),
+                ("Stop", "stop", running),
+                ("Restart", "restart", True),
+            ):
+                item = Gtk.MenuItem(label=label)
+                item.set_sensitive(sensitive)
+                item.connect("activate", lambda _i, a=action: self.service_action(a))
+                menu.append(item)
+            menu.append(Gtk.SeparatorMenuItem())
+
+            menu.append(self.radio_submenu(
+                "Model", self.model_entries(model, voxtral_local), model,
+                lambda value: self.set_and_restart("whisper", "model", value)))
+            hotkeys = HOTKEYS if key in HOTKEYS else HOTKEYS + [key]
+            menu.append(self.radio_submenu(
+                "Hotkey", [(hotkey_label(k), k, True) for k in hotkeys], key,
+                lambda value: self.set_and_restart("hotkey", "key", value)))
+
+            autostart = Gtk.CheckMenuItem(label="Start on login")
+            autostart.set_active(enabled)
+            autostart.connect("toggled", self.toggle_autostart)
+            menu.append(autostart)
+            menu.append(Gtk.SeparatorMenuItem())
+
+            logs = Gtk.MenuItem(label="View logs")
+            logs.connect("activate", lambda _i: open_terminal(
+                ["journalctl", "--user", "-u", SERVICE, "-f"]))
+            menu.append(logs)
+            config = Gtk.MenuItem(label="Open config file")
+            config.connect("activate", lambda _i: subprocess.Popen(
+                ["xdg-open", str(CONFIG_PATH)]))
+            menu.append(config)
+            menu.append(Gtk.SeparatorMenuItem())
+
+            quit_item = Gtk.MenuItem(label="Quit tray icon")
+            quit_item.connect("activate", lambda _i: Gtk.main_quit())
+            menu.append(quit_item)
+
+            menu.show_all()
+            self.menu = menu  # keep a reference; the indicator exports it
+            self.indicator.set_menu(menu)
+            self.building = False
+
+        def model_entries(self, current, voxtral_local):
+            entries = [None if m is None else (m[0], m[1], True) for m in MODELS]
+            entries.append((VOXTRAL_LOCAL_LABEL + ("" if voxtral_local else
+                            " \u2014 set voxtral_local_model"),
+                            voxtral_local or "voxtral-local:", bool(voxtral_local)))
+            known = {e[1] for e in entries if e}
+            if current not in known:
+                entries += [None, (f"Custom: {current}", current, True)]
+            return entries
+
+        def radio_submenu(self, title, entries, current, on_pick):
+            parent = Gtk.MenuItem(label=title)
+            sub = Gtk.Menu()
+            group = None
+            for entry in entries:
+                if entry is None:
+                    sub.append(Gtk.SeparatorMenuItem())
+                    continue
+                label, value, sensitive = entry
+                item = Gtk.RadioMenuItem.new_with_label_from_widget(group, label)
+                group = item
+                item.set_active(value == current)
+                item.set_sensitive(sensitive)
+                item.connect("toggled", lambda i, v=value: (
+                    i.get_active() and not self.building and on_pick(v)))
+                sub.append(item)
+            parent.set_submenu(sub)
+            return parent
+
+        # -- actions --------------------------------------------------------
+        def service_action(self, action):
+            systemctl(action, SERVICE)
+            self.refresh()
+
+        def set_and_restart(self, section, key, value):
+            if read_config_value(CONFIG_PATH, section, key) == value:
+                return
+            set_config_value(CONFIG_PATH, section, key, value)
+            restart_if_running()
+            self.refresh()
+
+        def toggle_autostart(self, item):
+            if self.building:
+                return
+            systemctl("enable" if item.get_active() else "disable", SERVICE)
+            self.refresh()
+
+    Tray()
+    Gtk.main()
+
+
+def hotkey_label(key):
+    """'scroll_lock' -> 'Scroll Lock', 'f12' -> 'F12' (no underscores: menus treat them as mnemonics)."""
+    return key.replace("_", " ").title()
+
+
+def model_label(value):
+    for m in MODELS:
+        if m and m[1] == value:
+            return m[0]
+    if value.startswith("voxtral-local:"):
+        return VOXTRAL_LOCAL_LABEL
+    return value
+
+
+if __name__ == "__main__":
+    sys.exit(main())

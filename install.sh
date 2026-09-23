@@ -33,7 +33,7 @@ install_deps() {
     case $pm in
         apt)
             sudo apt update
-            sudo apt install -y alsa-utils xclip xdotool libnotify-bin
+            sudo apt install -y alsa-utils xclip xdotool libnotify-bin python3-gi gir1.2-ayatanaappindicator3-0.1
             ;;
         dnf)
             sudo dnf install -y alsa-utils xclip xdotool libnotify
@@ -97,6 +97,44 @@ install_ctl() {
     esac
 }
 
+# Install the tray icon as a systemd user service
+install_tray_service() {
+    echo ""
+    echo "Installing tray icon service..."
+
+    local display="${DISPLAY:-:0}"
+    local xauthority="${XAUTHORITY:-$HOME/.Xauthority}"
+
+    cat > "$SERVICE_DIR/soupawhisper-tray.service" << EOF
+[Unit]
+Description=SoupaWhisper tray icon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 $SCRIPT_DIR/soupawhisper-tray
+Restart=on-failure
+RestartSec=5
+# Exit 3 means the AppIndicator typelib is missing; retrying will not help
+RestartPreventExitStatus=3
+
+Environment=DISPLAY=$display
+Environment=XAUTHORITY=$xauthority
+
+[Install]
+WantedBy=default.target
+EOF
+
+    echo "Created service at $SERVICE_DIR/soupawhisper-tray.service"
+    systemctl --user daemon-reload
+    systemctl --user enable soupawhisper-tray
+
+    if ! /usr/bin/python3 -c "import gi; gi.require_version('AyatanaAppIndicator3', '0.1')" 2>/dev/null; then
+        echo "Note: the tray needs PyGObject and Ayatana AppIndicator for /usr/bin/python3"
+        echo "  (Debian/Ubuntu: python3-gi gir1.2-ayatanaappindicator3-0.1)."
+    fi
+}
+
 # Install systemd service
 install_service() {
     echo ""
@@ -125,6 +163,8 @@ WorkingDirectory=$SCRIPT_DIR
 ExecStart=$venv_path/bin/python $SCRIPT_DIR/dictate.py
 Restart=on-failure
 RestartSec=5
+# Flush print() output so journalctl shows backend status lines
+Environment=PYTHONUNBUFFERED=1
 
 # X11 display access
 Environment=DISPLAY=$display
@@ -166,6 +206,7 @@ main() {
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         install_service
+        install_tray_service
     fi
 
     echo ""
@@ -181,6 +222,7 @@ main() {
     echo "Exit:   Ctrl+C"
     echo ""
     echo "Control panel: soupawhisper-ctl (installed to ~/.local/bin)"
+    echo "Tray icon:     systemctl --user start soupawhisper-tray"
 }
 
 main "$@"

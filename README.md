@@ -104,12 +104,31 @@ soupawhisper-ctl
 
 Features:
 - Start/stop/restart the service
-- Switch Whisper models (standard + distilled)
+- Switch models (standard, distilled, Groq cloud, Voxtral cloud and local)
 - Change hotkey (F12, F11, or detect any key)
 - Enable/disable auto-start
 - View logs
 
 The control panel edits `~/.config/soupawhisper/config.ini` and restarts the service to apply changes.
+
+### Tray Icon
+
+`soupawhisper-tray` puts a microphone icon in the top bar. The icon shows whether dictation is running, and its menu has:
+
+- Status line (running/stopped, current model, hotkey)
+- Start / Stop / Restart
+- Model and Hotkey submenus (same choices as the control panel; picking one restarts dictation)
+- Start on login
+- View logs, Open config file
+
+`install.sh` installs it as the `soupawhisper-tray` systemd user service when you choose to install the service. It runs on the system `python3` and needs PyGObject plus Ayatana AppIndicator:
+
+```bash
+sudo apt install python3-gi gir1.2-ayatanaappindicator3-0.1   # Debian/Ubuntu
+systemctl --user start soupawhisper-tray
+```
+
+On GNOME the icon needs the AppIndicator extension (enabled by default on Ubuntu).
 
 ## Configuration
 
@@ -118,6 +137,7 @@ Edit `~/.config/soupawhisper/config.ini`:
 ```ini
 [whisper]
 # Model size: tiny.en, base.en, small.en, medium.en, large-v3
+# Or a backend prefix: groq:..., voxtral:..., voxtral-local:... (see the backend sections below)
 model = base.en
 
 # Device: cpu or cuda (cuda requires cuDNN)
@@ -242,12 +262,15 @@ cmake --build build -j
 
 `cmake` needs CUDA (`nvcc`) on PATH for GPU acceleration; if you don't have `cmake` installed system-wide, `uv tool install cmake` gets you one without root.
 
-Set the model to `voxtral-local:<path-to-gguf>` in your config, and point `voxtral_binary` at the built binary if it isn't on your `PATH`:
+Set the model to `voxtral-local:<path-to-gguf>` in your config, and point `voxtral_binary` at the built binary if it isn't on your `PATH`. Setting `voxtral_local_model` lets `soupawhisper-ctl` and the tray offer "Voxtral local" in their model menus:
 
 ```ini
 [whisper]
 model = voxtral-local:/home/you/tools/voxtral.cpp/models/voxtral-3b/Q4_K_M.gguf
 voxtral_binary = /home/you/tools/voxtral.cpp/build/voxtral
+voxtral_local_model = /home/you/tools/voxtral.cpp/models/voxtral-3b/Q4_K_M.gguf
 ```
 
-On a 6GB laptop GPU (RTX 4050), Q4_K_M transcribes roughly 3x faster than real time; CPU-only fallback is roughly 9x slower than real time and only practical for short clips.
+The voxtral.cpp CLI loads the model for every clip, so each dictation pays a few seconds of load time. On a 6GB laptop GPU (RTX 4050) with Q4_K_M, an 8-second clip took about 8 seconds end to end; a CPU-only build is roughly 9x slower than real time and only practical for short clips.
+
+**CUDA crash in voxtral.cpp:** as of voxtral.cpp commit `b2b2397`, CUDA builds segfault at the start of every transcription. `clear_kv_cache()` and `kv_cache_shift_left()` in `src/voxtral.cpp` call `memset`/`memmove` on `ggml_get_data()` pointers, which are GPU device pointers when the KV cache lives on CUDA. Replacing those calls with `ggml_backend_tensor_memset()` / `ggml_backend_tensor_get()` / `ggml_backend_tensor_set()` fixes it. Until that lands upstream, patch those two functions or build without `-DGGML_CUDA=ON`.
