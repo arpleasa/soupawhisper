@@ -107,7 +107,7 @@ Features:
 - Switch models (standard, distilled, Groq cloud, Voxtral cloud)
 - Change hotkey (F12, F11, or detect any key)
 - Enable/disable auto-start
-- Turn desktop notifications on/off
+- Turn auto-type, clipboard copy, and desktop notifications on/off
 - View logs
 
 The control panel edits `~/.config/soupawhisper/config.ini` and restarts the service to apply changes.
@@ -120,7 +120,7 @@ The control panel edits `~/.config/soupawhisper/config.ini` and restarts the ser
 - Start / Stop / Restart
 - Model and Hotkey submenus (same choices as the control panel; picking one restarts dictation)
 - Start on login
-- Show notifications (the Recording / Transcribing pop-ups)
+- Auto-type text, Copy to clipboard, Show notifications (on/off switches for the matching `[behavior]` settings)
 - View logs, Open config file
 
 `install.sh` installs it as the `soupawhisper-tray` systemd user service when you choose to install the service. It runs on the system `python3` and needs PyGObject plus Ayatana AppIndicator:

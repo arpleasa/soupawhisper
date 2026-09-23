@@ -156,14 +156,29 @@ def snapshot():
         service_enabled(),
         read_config_value(CONFIG_PATH, "whisper", "model", "base.en"),
         read_config_value(CONFIG_PATH, "hotkey", "key", "f12"),
-        notifications_enabled(),
+        tuple(read_bool(CONFIG_PATH, "behavior", key) for _, key in BEHAVIOR_TOGGLES),
     )
 
 
-def notifications_enabled(path=CONFIG_PATH):
-    """[behavior] notifications, parsed like configparser.getboolean (default on)."""
-    value = read_config_value(path, "behavior", "notifications", "true")
+# On/off [behavior] settings shown as check items: (menu label, config key).
+# dictate.py defaults each of these to true when the key is missing.
+BEHAVIOR_TOGGLES = [
+    ("Auto-type text", "auto_type"),
+    ("Copy to clipboard", "copy_to_clipboard"),
+    ("Show notifications", "notifications"),
+]
+
+
+def read_bool(path, section, key, default=True):
+    """A boolean config value, parsed like configparser.getboolean."""
+    value = read_config_value(path, section, key)
+    if value is None:
+        return default
     return value.strip().lower() not in ("0", "false", "no", "off")
+
+
+def notifications_enabled(path=CONFIG_PATH):
+    return read_bool(path, "behavior", "notifications")
 
 
 def open_terminal(command):
@@ -224,7 +239,7 @@ def main():
 
         def build_menu(self):
             self.building = True
-            state, enabled, model, key, notifications = self.state
+            state, enabled, model, key, toggles = self.state
             menu = Gtk.Menu()
 
             header = Gtk.MenuItem(label=self.status_text())
@@ -257,10 +272,11 @@ def main():
             autostart.connect("toggled", self.toggle_autostart)
             menu.append(autostart)
 
-            notify = Gtk.CheckMenuItem(label="Show notifications")
-            notify.set_active(notifications)
-            notify.connect("toggled", self.toggle_notifications)
-            menu.append(notify)
+            for (label, cfg_key), on in zip(BEHAVIOR_TOGGLES, toggles):
+                item = Gtk.CheckMenuItem(label=label)
+                item.set_active(on)
+                item.connect("toggled", lambda i, k=cfg_key: self.toggle_behavior(i, k))
+                menu.append(item)
             menu.append(Gtk.SeparatorMenuItem())
 
             logs = Gtk.MenuItem(label="View logs")
@@ -326,11 +342,10 @@ def main():
             systemctl("enable" if item.get_active() else "disable", SERVICE)
             self.refresh()
 
-        def toggle_notifications(self, item):
+        def toggle_behavior(self, item, key):
             if self.building:
                 return
-            self.set_and_restart("behavior", "notifications",
-                                 "true" if item.get_active() else "false")
+            self.set_and_restart("behavior", key, "true" if item.get_active() else "false")
 
     Tray()
     Gtk.main()

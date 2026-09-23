@@ -329,7 +329,14 @@ class Dictation:
                 if AUTO_TYPE:
                     subprocess.run(["xdotool", "type", "--clearmodifiers", text])
 
-                action = "Copied" if COPY_TO_CLIPBOARD else "Typed"
+                if AUTO_TYPE and COPY_TO_CLIPBOARD:
+                    action = "Typed + copied"
+                elif COPY_TO_CLIPBOARD:
+                    action = "Copied"
+                elif AUTO_TYPE:
+                    action = "Typed"
+                else:
+                    action = "Transcribed"
                 print(f"{action}: {text}")
                 self.notify(f"{action}!", text[:100] + ("..." if len(text) > 100 else ""), "emblem-ok-symbolic", 3000)
             else:

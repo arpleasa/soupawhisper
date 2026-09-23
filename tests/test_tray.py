@@ -74,6 +74,20 @@ class ConfigEditTests(unittest.TestCase):
         self.path.write_text("[behavior]\nauto_type = true\n")
         self.assertTrue(tray.notifications_enabled(self.path))  # missing key defaults on
 
+    def test_read_bool_for_each_toggle(self):
+        for _, key in tray.BEHAVIOR_TOGGLES:
+            self.assertTrue(tray.read_bool(self.path, "behavior", key), key)  # example: all true
+            tray.set_config_value(self.path, "behavior", key, "false")
+            self.assertFalse(tray.read_bool(self.path, "behavior", key), key)
+        self.path.write_text("[behavior]\n")
+        for _, key in tray.BEHAVIOR_TOGGLES:
+            self.assertTrue(tray.read_bool(self.path, "behavior", key), key)  # missing -> on
+
+    def test_toggle_keys_are_read_by_dictate(self):
+        source = (ROOT / "dictate.py").read_text()
+        for _, key in tray.BEHAVIOR_TOGGLES:
+            self.assertIn(f'config.getboolean("behavior", "{key}"', source, key)
+
     def test_notifications_toggle_edits_only_that_line(self):
         before = self.lines()
         tray.set_config_value(self.path, "behavior", "notifications", "false")

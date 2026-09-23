@@ -22,13 +22,14 @@ get_current_hotkey() {
     fi
 }
 
-# Desktop notifications ([behavior] notifications). Prints "on" or "off"; default on.
-get_notifications() {
-    local value=""
+# On/off settings under [behavior] (auto_type, copy_to_clipboard, notifications).
+# get_behavior KEY prints "on" or "off"; a missing key counts as on, matching dictate.py.
+get_behavior() {
+    local key="$1" value=""
     if [[ -f "$CONFIG_FILE" ]]; then
-        value=$(awk '
+        value=$(awk -v key="$key" '
             /^\[/ { in_behavior = ($0 ~ /^\[behavior\]/) }
-            in_behavior && /^notifications[ \t]*=/ { sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]+$/, ""); print tolower($0); exit }
+            in_behavior && $0 ~ "^" key "[ \t]*=" { sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]+$/, ""); print tolower($0); exit }
         ' "$CONFIG_FILE")
     fi
     case "$value" in
@@ -37,36 +38,57 @@ get_notifications() {
     esac
 }
 
-set_notifications() {
-    local value="$1"  # true or false
+# set_behavior KEY true|false
+set_behavior() {
+    local key="$1" value="$2"
 
     if [[ ! -f "$CONFIG_FILE" ]]; then
         echo "Config file not found: $CONFIG_FILE"
         return 1
     fi
 
-    # Only modify notifications under [behavior]. If the key is missing, add it
-    # after the section's last non-blank line (blank lines are held back in
-    # `pending` so the new key lands before them); add the section if missing.
-    awk -v newval="$value" '
+    # Only modify KEY under [behavior]. If the key is missing, add it after the
+    # section's last non-blank line (blank lines are held back in `pending` so
+    # the new key lands before them); add the section if missing.
+    awk -v key="$key" -v newval="$value" '
         function flush() { printf "%s", pending; pending = "" }
         BEGIN { in_behavior=0; found=0; seen=0; pending="" }
         /^\[/ {
-            if (in_behavior && !found) { print "notifications = " newval; found=1 }
+            if (in_behavior && !found) { print key " = " newval; found=1 }
             flush()
             in_behavior = ($0 ~ /^\[behavior\]/)
             if (in_behavior) seen=1
             print; next
         }
         in_behavior && /^[ \t]*$/ { pending = pending $0 "\n"; next }
-        in_behavior && /^notifications[ \t]*=/ { flush(); print "notifications = " newval; found=1; next }
+        in_behavior && $0 ~ "^" key "[ \t]*=" { flush(); print key " = " newval; found=1; next }
         { flush(); print }
         END {
-            if (in_behavior && !found) { print "notifications = " newval; found=1 }
+            if (in_behavior && !found) { print key " = " newval; found=1 }
             flush()
-            if (!seen) { print ""; print "[behavior]"; print "notifications = " newval }
+            if (!seen) { print ""; print "[behavior]"; print key " = " newval }
         }
     ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+}
+
+# Flip an on/off setting and restart dictation (it reads the config at startup).
+toggle_behavior() {
+    local key="$1" label="$2"
+    if [[ $(get_behavior "$key") == on ]]; then
+        set_behavior "$key" false
+    else
+        set_behavior "$key" true
+    fi
+    echo "$label: $(get_behavior "$key")"
+    if systemctl --user is-active --quiet $SERVICE; then
+        systemctl --user restart $SERVICE
+        echo "Service restarted to apply."
+    fi
+}
+
+# "Turn X off" / "Turn X on" menu text for the opposite of the current state
+flip_word() {
+    [[ $(get_behavior "$1") == on ]] && echo off || echo on
 }
 
 set_hotkey() {
@@ -337,7 +359,7 @@ show_menu() {
     echo ""
     echo "  Model:  $(get_current_model)"
     echo "  Hotkey: $(get_current_hotkey)"
-    echo "  Notifications: $(get_notifications)"
+    echo "  Auto-type: $(get_behavior auto_type)   Clipboard: $(get_behavior copy_to_clipboard)   Notifications: $(get_behavior notifications)"
     echo ""
     echo "  1) Start"
     echo "  2) Stop"
@@ -348,7 +370,9 @@ show_menu() {
     echo "  7) Enable auto-start"
     echo "  8) Disable auto-start"
     echo "  9) View logs"
-    echo "  10) Turn notifications $([[ $(get_notifications) == on ]] && echo off || echo on)"
+    echo "  10) Turn auto-type $(flip_word auto_type)"
+    echo "  11) Turn clipboard copy $(flip_word copy_to_clipboard)"
+    echo "  12) Turn notifications $(flip_word notifications)"
     echo "  q) Quit"
     echo ""
 }
@@ -393,18 +417,9 @@ while true; do
         9)
             journalctl --user -u $SERVICE -n 30 --no-pager
             ;;
-        10)
-            if [[ $(get_notifications) == on ]]; then
-                set_notifications false
-            else
-                set_notifications true
-            fi
-            echo "Notifications: $(get_notifications)"
-            if systemctl --user is-active --quiet $SERVICE; then
-                systemctl --user restart $SERVICE
-                echo "Service restarted to apply."
-            fi
-            ;;
+        10) toggle_behavior auto_type "Auto-type" ;;
+        11) toggle_behavior copy_to_clipboard "Clipboard copy" ;;
+        12) toggle_behavior notifications "Notifications" ;;
         q|Q)
             echo "Bye!"
             exit 0
