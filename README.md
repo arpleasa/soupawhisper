@@ -94,11 +94,13 @@ journalctl --user -u soupawhisper -f    # View logs
 
 ### Control Panel
 
-A TUI control panel is included for easy management:
+A TUI control panel is included for easy management. `install.sh` symlinks it into `~/.local/bin`, so after installing it's just:
 
 ```bash
-./soupawhisper-ctl
+soupawhisper-ctl
 ```
+
+(Or run it directly from the repo with `./soupawhisper-ctl` without installing.)
 
 Features:
 - Start/stop/restart the service
@@ -188,6 +190,8 @@ Install cuDNN 9 (see GPU Support section above) or switch to CPU mode.
 
 Distilled models offer near-original quality with significantly better speed. For dictation with GPU, `large-v3-turbo` or `distil-large-v3` are excellent choices. For CPU or low VRAM, `small.en` or `base.en` work well.
 
+The distilled/turbo entries in `soupawhisper-ctl`'s model menu (`Systran/faster-distil-whisper-large-v3`, `Systran/faster-distil-whisper-large-v2`, `deepdml/faster-whisper-large-v3-turbo-ct2`) are third-party CTranslate2 conversions hosted on Hugging Face, not maintained by this project or by OpenAI/Systran/deepdml as an official faster-whisper release. Repo names, availability, and conversion quality may change upstream without notice.
+
 ## Groq Cloud Backend
 
 For cloud-based transcription without local GPU or model downloads, use Groq's hosted Whisper API.
@@ -199,7 +203,7 @@ Set the model to `groq:<model-name>` in your config:
 model = groq:whisper-large-v3-turbo
 ```
 
-Requires `GROQ_API_KEY` in your environment. Falls back to reading from `~/.claude/Skills/SdkAgents/data/.env` if the env var is unset.
+Requires `GROQ_API_KEY` in your environment. Falls back to reading a `GROQ_API_KEY=...` line from `~/.config/soupawhisper/.env` if the env var is unset.
 
 Available Groq models:
 - `whisper-large-v3-turbo` - fast, high quality

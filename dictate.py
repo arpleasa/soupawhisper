@@ -94,11 +94,12 @@ GROQ_MODEL = MODEL_SIZE.split(":", 1)[1] if USE_GROQ else None
 
 
 def load_groq_api_key():
-    """Resolve GROQ_API_KEY from the environment or PAI's SdkAgents .env."""
+    """Resolve GROQ_API_KEY from the environment, or from
+    ~/.config/soupawhisper/.env as a fallback."""
     key = os.environ.get("GROQ_API_KEY")
     if key:
         return key.strip()
-    env_path = Path.home() / ".claude" / "Skills" / "SdkAgents" / "data" / ".env"
+    env_path = Path.home() / ".config" / "soupawhisper" / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
             line = line.strip()
@@ -134,7 +135,7 @@ class Dictation:
             self.groq_api_key = load_groq_api_key()
             hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
             if not self.groq_api_key:
-                self.model_error = "GROQ_API_KEY not found (env or ~/.claude/Skills/SdkAgents/data/.env)"
+                self.model_error = "GROQ_API_KEY not found (env or ~/.config/soupawhisper/.env)"
                 self.model_loaded.set()
                 print(f"Failed to init Groq backend: {self.model_error}")
                 return
