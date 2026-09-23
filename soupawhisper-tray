@@ -153,7 +153,14 @@ def snapshot():
         service_enabled(),
         read_config_value(CONFIG_PATH, "whisper", "model", "base.en"),
         read_config_value(CONFIG_PATH, "hotkey", "key", "f12"),
+        notifications_enabled(),
     )
+
+
+def notifications_enabled(path=CONFIG_PATH):
+    """[behavior] notifications, parsed like configparser.getboolean (default on)."""
+    value = read_config_value(path, "behavior", "notifications", "true")
+    return value.strip().lower() not in ("0", "false", "no", "off")
 
 
 def open_terminal(command):
@@ -207,13 +214,13 @@ def main():
             return True  # keep polling
 
         def status_text(self):
-            state, _, model, key = self.state
+            state, _, model, key, _ = self.state
             word = {"active": "running", "inactive": "stopped"}.get(state, state)
             return f"Dictation {word} \u00b7 {model_label(model)} \u00b7 {hotkey_label(key)}"
 
         def build_menu(self):
             self.building = True
-            state, enabled, model, key = self.state
+            state, enabled, model, key, notifications = self.state
             menu = Gtk.Menu()
 
             header = Gtk.MenuItem(label=self.status_text())
@@ -245,6 +252,11 @@ def main():
             autostart.set_active(enabled)
             autostart.connect("toggled", self.toggle_autostart)
             menu.append(autostart)
+
+            notify = Gtk.CheckMenuItem(label="Show notifications")
+            notify.set_active(notifications)
+            notify.connect("toggled", self.toggle_notifications)
+            menu.append(notify)
             menu.append(Gtk.SeparatorMenuItem())
 
             logs = Gtk.MenuItem(label="View logs")
@@ -309,6 +321,12 @@ def main():
                 return
             systemctl("enable" if item.get_active() else "disable", SERVICE)
             self.refresh()
+
+        def toggle_notifications(self, item):
+            if self.building:
+                return
+            self.set_and_restart("behavior", "notifications",
+                                 "true" if item.get_active() else "false")
 
     Tray()
     Gtk.main()

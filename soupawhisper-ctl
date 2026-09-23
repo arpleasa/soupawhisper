@@ -22,6 +22,53 @@ get_current_hotkey() {
     fi
 }
 
+# Desktop notifications ([behavior] notifications). Prints "on" or "off"; default on.
+get_notifications() {
+    local value=""
+    if [[ -f "$CONFIG_FILE" ]]; then
+        value=$(awk '
+            /^\[/ { in_behavior = ($0 ~ /^\[behavior\]/) }
+            in_behavior && /^notifications[ \t]*=/ { sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]+$/, ""); print tolower($0); exit }
+        ' "$CONFIG_FILE")
+    fi
+    case "$value" in
+        0|false|no|off) echo "off" ;;
+        *) echo "on" ;;
+    esac
+}
+
+set_notifications() {
+    local value="$1"  # true or false
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "Config file not found: $CONFIG_FILE"
+        return 1
+    fi
+
+    # Only modify notifications under [behavior]. If the key is missing, add it
+    # after the section's last non-blank line (blank lines are held back in
+    # `pending` so the new key lands before them); add the section if missing.
+    awk -v newval="$value" '
+        function flush() { printf "%s", pending; pending = "" }
+        BEGIN { in_behavior=0; found=0; seen=0; pending="" }
+        /^\[/ {
+            if (in_behavior && !found) { print "notifications = " newval; found=1 }
+            flush()
+            in_behavior = ($0 ~ /^\[behavior\]/)
+            if (in_behavior) seen=1
+            print; next
+        }
+        in_behavior && /^[ \t]*$/ { pending = pending $0 "\n"; next }
+        in_behavior && /^notifications[ \t]*=/ { flush(); print "notifications = " newval; found=1; next }
+        { flush(); print }
+        END {
+            if (in_behavior && !found) { print "notifications = " newval; found=1 }
+            flush()
+            if (!seen) { print ""; print "[behavior]"; print "notifications = " newval }
+        }
+    ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+}
+
 set_hotkey() {
     local key="$1"
 
@@ -290,6 +337,7 @@ show_menu() {
     echo ""
     echo "  Model:  $(get_current_model)"
     echo "  Hotkey: $(get_current_hotkey)"
+    echo "  Notifications: $(get_notifications)"
     echo ""
     echo "  1) Start"
     echo "  2) Stop"
@@ -300,6 +348,7 @@ show_menu() {
     echo "  7) Enable auto-start"
     echo "  8) Disable auto-start"
     echo "  9) View logs"
+    echo "  10) Turn notifications $([[ $(get_notifications) == on ]] && echo off || echo on)"
     echo "  q) Quit"
     echo ""
 }
@@ -343,6 +392,18 @@ while true; do
             ;;
         9)
             journalctl --user -u $SERVICE -n 30 --no-pager
+            ;;
+        10)
+            if [[ $(get_notifications) == on ]]; then
+                set_notifications false
+            else
+                set_notifications true
+            fi
+            echo "Notifications: $(get_notifications)"
+            if systemctl --user is-active --quiet $SERVICE; then
+                systemctl --user restart $SERVICE
+                echo "Service restarted to apply."
+            fi
             ;;
         q|Q)
             echo "Bye!"
