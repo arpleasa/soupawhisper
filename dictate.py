@@ -6,6 +6,7 @@ Hold the hotkey to record, release to transcribe and copy to clipboard.
 
 import argparse
 import configparser
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -47,6 +48,7 @@ def load_config():
         "model": config.get("whisper", "model", fallback=defaults["model"]),
         "device": config.get("whisper", "device", fallback=defaults["device"]),
         "compute_type": config.get("whisper", "compute_type", fallback=defaults["compute_type"]),
+        "voxtral_binary": config.get("whisper", "voxtral_binary", fallback="voxtral"),
         "key": config.get("hotkey", "key", fallback=defaults["key"]),
         "auto_type": config.getboolean("behavior", "auto_type", fallback=defaults["auto_type"]),
         "copy_to_clipboard": config.getboolean("behavior", "copy_to_clipboard", fallback=defaults["copy_to_clipboard"]),
@@ -92,18 +94,42 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 USE_GROQ = MODEL_SIZE.startswith("groq:")
 GROQ_MODEL = MODEL_SIZE.split(":", 1)[1] if USE_GROQ else None
 
+# Voxtral local backend: selected when the model value is "voxtral-local:<gguf-path>"
+# (e.g. "voxtral-local:/home/user/models/voxtral-mini-3b-q4_k_m.gguf"). Runs the
+# voxtral.cpp CLI as a subprocess against a quantized GGUF checkpoint. Checked
+# before the plain "voxtral:" cloud prefix since it is a distinct, longer prefix.
+USE_VOXTRAL_LOCAL = MODEL_SIZE.startswith("voxtral-local:")
+VOXTRAL_LOCAL_MODEL_PATH = MODEL_SIZE.split(":", 1)[1] if USE_VOXTRAL_LOCAL else None
+VOXTRAL_BINARY = CONFIG["voxtral_binary"]
+
+# Voxtral cloud backend: selected when the model value is "voxtral:<model-name>"
+# (e.g. "voxtral:voxtral-mini-2602"). Cloud transcription via Mistral's API.
+VOXTRAL_API_URL = "https://api.mistral.ai/v1/audio/transcriptions"
+USE_VOXTRAL_CLOUD = MODEL_SIZE.startswith("voxtral:") and not USE_VOXTRAL_LOCAL
+VOXTRAL_MODEL = MODEL_SIZE.split(":", 1)[1] if USE_VOXTRAL_CLOUD else None
+
 
 def load_groq_api_key():
     """Resolve GROQ_API_KEY from the environment, or from
     ~/.config/soupawhisper/.env as a fallback."""
-    key = os.environ.get("GROQ_API_KEY")
+    return _load_api_key_from_env_or_sidecar("GROQ_API_KEY")
+
+
+def load_mistral_api_key():
+    """Resolve MISTRAL_API_KEY from the environment, or from
+    ~/.config/soupawhisper/.env as a fallback."""
+    return _load_api_key_from_env_or_sidecar("MISTRAL_API_KEY")
+
+
+def _load_api_key_from_env_or_sidecar(var_name):
+    key = os.environ.get(var_name)
     if key:
         return key.strip()
     env_path = Path.home() / ".config" / "soupawhisper" / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
             line = line.strip()
-            if line.startswith("GROQ_API_KEY="):
+            if line.startswith(f"{var_name}="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     return None
 
@@ -116,6 +142,9 @@ class Dictation:
         self.model = None
         self.use_groq = False
         self.groq_api_key = None
+        self.use_voxtral_cloud = False
+        self.mistral_api_key = None
+        self.use_voxtral_local = False
         self.model_loaded = threading.Event()
         self.model_error = None
         self.running = True
@@ -130,10 +159,10 @@ class Dictation:
         threading.Thread(target=self._load_model, daemon=True).start()
 
     def _load_model(self):
+        hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
         if USE_GROQ:
             self.use_groq = True
             self.groq_api_key = load_groq_api_key()
-            hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
             if not self.groq_api_key:
                 self.model_error = "GROQ_API_KEY not found (env or ~/.config/soupawhisper/.env)"
                 self.model_loaded.set()
@@ -141,6 +170,37 @@ class Dictation:
                 return
             self.model_loaded.set()
             print(f"Using Groq cloud transcription ({GROQ_MODEL}). Ready for dictation!")
+            print(f"Hold [{hotkey_name}] to record, release to transcribe.")
+            print("Press Ctrl+C to quit.")
+            return
+        if USE_VOXTRAL_CLOUD:
+            self.use_voxtral_cloud = True
+            self.mistral_api_key = load_mistral_api_key()
+            if not self.mistral_api_key:
+                self.model_error = "MISTRAL_API_KEY not found (env or ~/.config/soupawhisper/.env)"
+                self.model_loaded.set()
+                print(f"Failed to init Voxtral cloud backend: {self.model_error}")
+                return
+            self.model_loaded.set()
+            print(f"Using Voxtral cloud transcription ({VOXTRAL_MODEL}). Ready for dictation!")
+            print(f"Hold [{hotkey_name}] to record, release to transcribe.")
+            print("Press Ctrl+C to quit.")
+            return
+        if USE_VOXTRAL_LOCAL:
+            self.use_voxtral_local = True
+            binary_path = shutil.which(VOXTRAL_BINARY) or (VOXTRAL_BINARY if os.path.exists(VOXTRAL_BINARY) else None)
+            if not binary_path:
+                self.model_error = f"voxtral binary not found: {VOXTRAL_BINARY} (set voxtral_binary in config)"
+                self.model_loaded.set()
+                print(f"Failed to init Voxtral local backend: {self.model_error}")
+                return
+            if not os.path.exists(VOXTRAL_LOCAL_MODEL_PATH):
+                self.model_error = f"GGUF model not found: {VOXTRAL_LOCAL_MODEL_PATH}"
+                self.model_loaded.set()
+                print(f"Failed to init Voxtral local backend: {self.model_error}")
+                return
+            self.model_loaded.set()
+            print(f"Using local Voxtral (GGUF) transcription ({VOXTRAL_LOCAL_MODEL_PATH}). Ready for dictation!")
             print(f"Hold [{hotkey_name}] to record, release to transcribe.")
             print("Press Ctrl+C to quit.")
             return
@@ -172,6 +232,47 @@ class Dictation:
             )
         resp.raise_for_status()
         return resp.text.strip()
+
+    def _transcribe_voxtral_cloud(self, wav_path):
+        """Transcribe a WAV file via Mistral's hosted Voxtral API."""
+        import requests
+
+        with open(wav_path, "rb") as f:
+            resp = requests.post(
+                VOXTRAL_API_URL,
+                headers={"Authorization": f"Bearer {self.mistral_api_key}"},
+                files={"file": (os.path.basename(wav_path), f, "audio/wav")},
+                data={"model": VOXTRAL_MODEL},
+                timeout=60,
+            )
+        resp.raise_for_status()
+        return resp.json()["text"].strip()
+
+    def _transcribe_voxtral_local(self, wav_path):
+        """Transcribe a WAV file via a local voxtral.cpp subprocess (GGUF model)."""
+        binary_path = shutil.which(VOXTRAL_BINARY) or VOXTRAL_BINARY
+        output_text_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
+        output_text_file.close()
+        try:
+            result = subprocess.run(
+                [
+                    binary_path,
+                    "--model", VOXTRAL_LOCAL_MODEL_PATH,
+                    "--audio", wav_path,
+                    "--output-text", output_text_file.name,
+                    "--log-level", "error",
+                    "--gpu", "auto",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"voxtral exited {result.returncode}: {result.stderr.strip()}")
+            return Path(output_text_file.name).read_text().strip()
+        finally:
+            if os.path.exists(output_text_file.name):
+                os.unlink(output_text_file.name)
 
     def notify(self, title, message, icon="dialog-information", timeout=2000):
         """Send a desktop notification."""
@@ -241,6 +342,10 @@ class Dictation:
         try:
             if self.use_groq:
                 text = self._transcribe_groq(self.temp_file.name)
+            elif self.use_voxtral_cloud:
+                text = self._transcribe_voxtral_cloud(self.temp_file.name)
+            elif self.use_voxtral_local:
+                text = self._transcribe_voxtral_local(self.temp_file.name)
             else:
                 segments, info = self.model.transcribe(
                     self.temp_file.name,

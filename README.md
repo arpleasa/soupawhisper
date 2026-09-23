@@ -210,3 +210,44 @@ Available Groq models:
 - `whisper-large-v3` - highest accuracy
 
 Audio is sent to Groq's API for transcription. No local compute needed.
+
+## Voxtral Cloud Backend
+
+Mistral's hosted Voxtral Mini Transcribe 2 API, an alternative cloud backend competitive with or better than Whisper on English WER.
+
+Set the model to `voxtral:<model-name>` in your config:
+
+```ini
+[whisper]
+model = voxtral:voxtral-mini-2602
+```
+
+Requires `MISTRAL_API_KEY` in your environment. Falls back to reading a `MISTRAL_API_KEY=...` line from `~/.config/soupawhisper/.env` if the env var is unset.
+
+Audio is sent to Mistral's API for transcription. No local compute needed.
+
+## Voxtral Local Backend (GGUF, offline)
+
+Fully offline transcription using a quantized Voxtral Mini 3B model via [voxtral.cpp](https://github.com/andrijdavid/voxtral.cpp), a ggml-based C++ implementation. No API key and no network call; runs on your own GPU (or CPU).
+
+**Setup:**
+
+```bash
+git clone https://github.com/andrijdavid/voxtral.cpp.git ~/tools/voxtral.cpp
+cd ~/tools/voxtral.cpp
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON   # drop -DGGML_CUDA=ON if you have no NVIDIA GPU
+cmake --build build -j
+./tools/download_model.sh Q4_K_M --model mini   # ~3GB download
+```
+
+`cmake` needs CUDA (`nvcc`) on PATH for GPU acceleration; if you don't have `cmake` installed system-wide, `uv tool install cmake` gets you one without root.
+
+Set the model to `voxtral-local:<path-to-gguf>` in your config, and point `voxtral_binary` at the built binary if it isn't on your `PATH`:
+
+```ini
+[whisper]
+model = voxtral-local:/home/you/tools/voxtral.cpp/models/voxtral-3b/Q4_K_M.gguf
+voxtral_binary = /home/you/tools/voxtral.cpp/build/voxtral
+```
+
+On a 6GB laptop GPU (RTX 4050), Q4_K_M transcribes roughly 3x faster than real time; CPU-only fallback is roughly 9x slower than real time and only practical for short clips.
