@@ -4,95 +4,26 @@
 SERVICE="soupawhisper"
 CONFIG_FILE="$HOME/.config/soupawhisper/config.ini"
 
-get_current_model() {
+# Section-aware config access; comments and other keys are left alone.
+# get_value SECTION KEY DEFAULT prints the key's value from that section, or
+# DEFAULT when the file, section, or key is missing.
+get_value() {
+    local section="$1" key="$2" default="$3" value=""
     if [[ -f "$CONFIG_FILE" ]]; then
-        model=$(grep -E "^model[ \t]*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
-        echo "${model:-base.en}"
-    else
-        echo "base.en"
-    fi
-}
-
-get_current_hotkey() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        key=$(grep -E "^key[ \t]*=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
-        echo "${key:-f12}"
-    else
-        echo "f12"
-    fi
-}
-
-# On/off settings under [behavior] (auto_type, copy_to_clipboard, notifications).
-# get_behavior KEY prints "on" or "off"; a missing key counts as on, matching dictate.py.
-get_behavior() {
-    local key="$1" value=""
-    if [[ -f "$CONFIG_FILE" ]]; then
-        value=$(awk -v key="$key" '
-            /^\[/ { in_behavior = ($0 ~ /^\[behavior\]/) }
-            in_behavior && $0 ~ "^" key "[ \t]*=" { sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]+$/, ""); print tolower($0); exit }
+        value=$(awk -v header="[$section]" -v key="$key" '
+            /^\[/ { in_section = (index($0, header) == 1) }
+            in_section && $0 ~ "^" key "[ \t]*=" { sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]+$/, ""); print; exit }
         ' "$CONFIG_FILE")
     fi
-    case "$value" in
-        0|false|no|off) echo "off" ;;
-        *) echo "on" ;;
-    esac
+    echo "${value:-$default}"
 }
 
-# set_behavior KEY true|false
-set_behavior() {
-    local key="$1" value="$2"
-
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "Config file not found: $CONFIG_FILE"
-        return 1
-    fi
-
-    # Only modify KEY under [behavior]. If the key is missing, add it after the
-    # section's last non-blank line (blank lines are held back in `pending` so
-    # the new key lands before them); add the section if missing.
-    awk -v key="$key" -v newval="$value" '
-        function flush() { printf "%s", pending; pending = "" }
-        BEGIN { in_behavior=0; found=0; seen=0; pending="" }
-        /^\[/ {
-            if (in_behavior && !found) { print key " = " newval; found=1 }
-            flush()
-            in_behavior = ($0 ~ /^\[behavior\]/)
-            if (in_behavior) seen=1
-            print; next
-        }
-        in_behavior && /^[ \t]*$/ { pending = pending $0 "\n"; next }
-        in_behavior && $0 ~ "^" key "[ \t]*=" { flush(); print key " = " newval; found=1; next }
-        { flush(); print }
-        END {
-            if (in_behavior && !found) { print key " = " newval; found=1 }
-            flush()
-            if (!seen) { print ""; print "[behavior]"; print key " = " newval }
-        }
-    ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
-}
-
-# Flip an on/off setting and restart dictation (it reads the config at startup).
-toggle_behavior() {
-    local key="$1" label="$2"
-    if [[ $(get_behavior "$key") == on ]]; then
-        set_behavior "$key" false
-    else
-        set_behavior "$key" true
-    fi
-    echo "$label: $(get_behavior "$key")"
-    if systemctl --user is-active --quiet $SERVICE; then
-        systemctl --user restart $SERVICE
-        echo "Service restarted to apply."
-    fi
-}
-
-# "Turn X off" / "Turn X on" menu text for the opposite of the current state
-flip_word() {
-    [[ $(get_behavior "$1") == on ]] && echo off || echo on
-}
-
-set_hotkey() {
-    local key="$1"
+# set_value SECTION KEY VALUE replaces the key's line in that section. If the
+# key is missing it is added after the section's last non-blank line (blank
+# lines are held back in `pending` so it lands before them); if the section is
+# missing it is appended.
+set_value() {
+    local section="$1" key="$2" value="$3"
 
     if [[ ! -f "$CONFIG_FILE" ]]; then
         echo "Config file not found: $CONFIG_FILE"
@@ -100,21 +31,64 @@ set_hotkey() {
         return 1
     fi
 
-    # Use awk to only modify key under [hotkey] section
-    awk -v newkey="$key" '
-        BEGIN { in_hotkey=0; found=0 }
-        /^\[hotkey\]/ { in_hotkey=1; print; next }
-        /^\[/ && !/^\[hotkey\]/ { in_hotkey=0 }
-        in_hotkey && /^key[ \t]*=/ { print "key = " newkey; found=1; next }
-        { print }
+    awk -v header="[$section]" -v key="$key" -v newval="$value" '
+        function flush() { printf "%s", pending; pending = "" }
+        BEGIN { in_section=0; found=0; seen=0; pending="" }
+        /^\[/ {
+            if (in_section && !found) { print key " = " newval; found=1 }
+            flush()
+            in_section = (index($0, header) == 1)
+            if (in_section) seen=1
+            print; next
+        }
+        in_section && /^[ \t]*$/ { pending = pending $0 "\n"; next }
+        in_section && $0 ~ "^" key "[ \t]*=" { flush(); print key " = " newval; found=1; next }
+        { flush(); print }
         END {
-            if (!found) {
-                print ""
-                print "[hotkey]"
-                print "key = " newkey
-            }
+            if (in_section && !found) { print key " = " newval; found=1 }
+            flush()
+            if (!seen) { print ""; print header; print key " = " newval }
         }
     ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+}
+
+get_current_model() { get_value whisper model base.en; }
+get_current_hotkey() { get_value hotkey key f12; }
+set_model() { set_value whisper model "$1"; }
+set_hotkey() { set_value hotkey key "$1"; }
+
+# Dictation reads the config only at startup: restart it if it is running.
+restart_if_running() {
+    if systemctl --user is-active --quiet $SERVICE; then
+        systemctl --user restart $SERVICE
+        echo "Service restarted to apply."
+    fi
+}
+
+# On/off settings under [behavior] (auto_type, copy_to_clipboard, notifications).
+# get_behavior KEY prints "on" or "off"; a missing key counts as on, matching dictate.py.
+get_behavior() {
+    case "$(get_value behavior "$1" | tr '[:upper:]' '[:lower:]')" in
+        0|false|no|off) echo "off" ;;
+        *) echo "on" ;;
+    esac
+}
+
+# Flip an on/off setting and apply it.
+toggle_behavior() {
+    local key="$1" label="$2"
+    if [[ $(get_behavior "$key") == on ]]; then
+        set_value behavior "$key" false
+    else
+        set_value behavior "$key" true
+    fi
+    echo "$label: $(get_behavior "$key")"
+    restart_if_running
+}
+
+# "Turn X off" / "Turn X on" menu text for the opposite of the current state
+flip_word() {
+    [[ $(get_behavior "$1") == on ]] && echo off || echo on
 }
 
 detect_key() {
@@ -228,12 +202,7 @@ select_hotkey() {
                 if detect_key; then
                     echo ""
                     echo "Hotkey set to: $(get_current_hotkey)"
-                    echo ""
-                    read -p "Restart service to apply? (y/n): " restart
-                    if [[ "$restart" == "y" || "$restart" == "Y" ]]; then
-                        systemctl --user restart $SERVICE
-                        echo "Service restarted."
-                    fi
+                    restart_if_running
                     return
                 fi
                 continue
@@ -256,32 +225,9 @@ select_hotkey() {
 
         echo ""
         echo "Hotkey set to: $(get_current_hotkey)"
-        echo ""
-        read -p "Restart service to apply? (y/n): " restart
-        if [[ "$restart" == "y" || "$restart" == "Y" ]]; then
-            systemctl --user restart $SERVICE
-            echo "Service restarted."
-        fi
+        restart_if_running
         return
     done
-}
-
-set_model() {
-    local model="$1"
-
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "Config file not found: $CONFIG_FILE"
-        return 1
-    fi
-
-    # Use awk to only modify model under [whisper] section
-    awk -v newmodel="$model" '
-        BEGIN { in_whisper=0 }
-        /^\[whisper\]/ { in_whisper=1; print; next }
-        /^\[/ && !/^\[whisper\]/ { in_whisper=0 }
-        in_whisper && /^model[ \t]*=/ { print "model = " newmodel; next }
-        { print }
-    ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 }
 
 show_status() {
@@ -342,12 +288,7 @@ select_model() {
 
         echo ""
         echo "Model set to: $(get_current_model)"
-        echo ""
-        read -p "Restart service to apply? (y/n): " restart
-        if [[ "$restart" == "y" || "$restart" == "Y" ]]; then
-            systemctl --user restart $SERVICE
-            echo "Service restarted."
-        fi
+        restart_if_running
         return
     done
 }
