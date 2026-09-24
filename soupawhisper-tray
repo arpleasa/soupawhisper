@@ -31,7 +31,8 @@ ICON_DIR = Path(__file__).resolve().parent / "icons"
 ICON_RUNNING = "soupawhisper-running-symbolic"
 ICON_STOPPED = "soupawhisper-stopped-symbolic"
 
-# (label, model value). None marks a separator. Mirrors soupawhisper-ctl's menu.
+# (label, model value). None marks a separator. Must list the same values, in
+# the same order, as soupawhisper-ctl's model menu (tests/test_tray.py checks).
 MODELS = [
     ("tiny.en", "tiny.en"),
     ("base.en", "base.en"),
@@ -47,7 +48,8 @@ MODELS = [
     ("Groq large-v3 (cloud)", "groq:whisper-large-v3"),
     ("Voxtral (Mistral cloud)", "voxtral:voxtral-mini-2602"),
 ]
-HOTKEYS = ["f12", "f11", "f10", "f9", "scroll_lock", "pause"]
+# Same values and order as soupawhisper-ctl's hotkey menu (also checked).
+HOTKEYS = ["f12", "f11", "f10", "f9", "f8", "scroll_lock", "pause", "insert"]
 
 
 # ---------------------------------------------------------------------------

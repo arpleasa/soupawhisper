@@ -6,6 +6,7 @@ Run all tests: poetry run python -m unittest discover -s tests
 
 import importlib.machinery
 import importlib.util
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,6 +100,21 @@ class ConfigEditTests(unittest.TestCase):
         self.path.chmod(0o600)
         tray.set_config_value(self.path, "whisper", "model", "small.en")
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
+
+class MenuParityTests(unittest.TestCase):
+    """The tray and soupawhisper-ctl offer the same models and hotkeys."""
+
+    def ctl_values(self, function):
+        ctl = (ROOT / "soupawhisper-ctl").read_text()
+        return re.findall(rf'^\s*\d+\) {function} "([^"]+)"', ctl, re.MULTILINE)
+
+    def test_models_match_ctl(self):
+        tray_models = [m[1] for m in tray.MODELS if m]
+        self.assertEqual(tray_models, self.ctl_values("set_model"))
+
+    def test_hotkeys_match_ctl(self):
+        self.assertEqual(tray.HOTKEYS, self.ctl_values("set_hotkey"))
 
 
 if __name__ == "__main__":
