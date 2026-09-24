@@ -71,6 +71,7 @@ def get_hotkey(key_name):
 
 
 HOTKEY = get_hotkey(CONFIG["key"])
+HOTKEY_NAME = HOTKEY.name if hasattr(HOTKEY, "name") else HOTKEY.char
 MODEL_SIZE = CONFIG["model"]
 DEVICE = CONFIG["device"]
 COMPUTE_TYPE = CONFIG["compute_type"]
@@ -86,17 +87,37 @@ class State(Enum):
     TOGGLED = "toggled"
     STOPPING = "stopping"
 
-# Groq cloud backend: selected when the model value is "groq:<model-name>"
-# (e.g. "groq:whisper-large-v3-turbo"). Cloud transcription needs no local GPU.
-GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-USE_GROQ = MODEL_SIZE.startswith("groq:")
-GROQ_MODEL = MODEL_SIZE.split(":", 1)[1] if USE_GROQ else None
+# Cloud backends, selected by a "<prefix>:<model-name>" model value, e.g.
+# "groq:whisper-large-v3-turbo" (Groq) or "voxtral:voxtral-mini-2602"
+# (Mistral). They need no local GPU. Each entry: the API endpoint, the env var
+# holding the API key, the form fields to send, and how to read the reply.
+CLOUD_BACKENDS = {
+    "groq": {
+        "name": "Groq",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "key_var": "GROQ_API_KEY",
+        "form": lambda model: {"model": model, "response_format": "text", "temperature": "0"},
+        "text": lambda resp: resp.text,
+    },
+    "voxtral": {
+        "name": "Voxtral",
+        "url": "https://api.mistral.ai/v1/audio/transcriptions",
+        "key_var": "MISTRAL_API_KEY",
+        "form": lambda model: {"model": model},
+        "text": lambda resp: resp.json()["text"],
+    },
+}
 
-# Voxtral cloud backend: selected when the model value is "voxtral:<model-name>"
-# (e.g. "voxtral:voxtral-mini-2602"). Cloud transcription via Mistral's API.
-VOXTRAL_API_URL = "https://api.mistral.ai/v1/audio/transcriptions"
-USE_VOXTRAL_CLOUD = MODEL_SIZE.startswith("voxtral:")
-VOXTRAL_MODEL = MODEL_SIZE.split(":", 1)[1] if USE_VOXTRAL_CLOUD else None
+
+def cloud_backend(model_value):
+    """(backend, model name) if model_value names a cloud backend, else (None, None)."""
+    prefix, sep, model = model_value.partition(":")
+    if sep and prefix in CLOUD_BACKENDS:
+        return CLOUD_BACKENDS[prefix], model
+    return None, None
+
+
+CLOUD, CLOUD_MODEL = cloud_backend(MODEL_SIZE)
 
 
 # Retry schedule for HTTP 429 (rate limited) from the cloud backends: wait this
@@ -131,19 +152,9 @@ def post_audio_with_retry(url, api_key, wav_path, data, sleep=time.sleep):
         sleep(delay)
 
 
-def load_groq_api_key():
-    """Resolve GROQ_API_KEY from the environment, or from
-    ~/.config/soupawhisper/.env as a fallback."""
-    return _load_api_key_from_env_or_sidecar("GROQ_API_KEY")
-
-
-def load_mistral_api_key():
-    """Resolve MISTRAL_API_KEY from the environment, or from
-    ~/.config/soupawhisper/.env as a fallback."""
-    return _load_api_key_from_env_or_sidecar("MISTRAL_API_KEY")
-
-
-def _load_api_key_from_env_or_sidecar(var_name):
+def load_api_key(var_name):
+    """An API key from the environment, or from a VAR=value line in
+    ~/.config/soupawhisper/.env as a fallback. None if neither has it."""
     key = os.environ.get(var_name)
     if key:
         return key.strip()
@@ -162,10 +173,7 @@ class Dictation:
         self.record_process = None
         self.temp_file = None
         self.model = None
-        self.use_groq = False
-        self.groq_api_key = None
-        self.use_voxtral_cloud = False
-        self.mistral_api_key = None
+        self.cloud_api_key = None
         self.model_loaded = threading.Event()
         self.model_error = None
         self.running = True
@@ -180,63 +188,33 @@ class Dictation:
         threading.Thread(target=self._load_model, daemon=True).start()
 
     def _load_model(self):
-        hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
-        if USE_GROQ:
-            self.use_groq = True
-            self.groq_api_key = load_groq_api_key()
-            if not self.groq_api_key:
-                self.model_error = "GROQ_API_KEY not found (env or ~/.config/soupawhisper/.env)"
-                self.model_loaded.set()
-                print(f"Failed to init Groq backend: {self.model_error}")
-                return
-            self.model_loaded.set()
-            print(f"Using Groq cloud transcription ({GROQ_MODEL}). Ready for dictation!")
-            print(f"Hold [{hotkey_name}] to record, release to transcribe.")
-            print("Press Ctrl+C to quit.")
-            return
-        if USE_VOXTRAL_CLOUD:
-            self.use_voxtral_cloud = True
-            self.mistral_api_key = load_mistral_api_key()
-            if not self.mistral_api_key:
-                self.model_error = "MISTRAL_API_KEY not found (env or ~/.config/soupawhisper/.env)"
-                self.model_loaded.set()
-                print(f"Failed to init Voxtral cloud backend: {self.model_error}")
-                return
-            self.model_loaded.set()
-            print(f"Using Voxtral cloud transcription ({VOXTRAL_MODEL}). Ready for dictation!")
-            print(f"Hold [{hotkey_name}] to record, release to transcribe.")
-            print("Press Ctrl+C to quit.")
-            return
         try:
-            self.model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
-            self.model_loaded.set()
-            hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
-            print(f"Model loaded. Ready for dictation!")
-            print(f"Hold [{hotkey_name}] to record, release to transcribe.")
-            print("Press Ctrl+C to quit.")
+            if CLOUD:
+                self.cloud_api_key = load_api_key(CLOUD["key_var"])
+                if not self.cloud_api_key:
+                    raise RuntimeError(
+                        f"{CLOUD['key_var']} not found (env or ~/.config/soupawhisper/.env)")
+                ready = f"Using {CLOUD['name']} cloud transcription ({CLOUD_MODEL})."
+            else:
+                self.model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+                ready = "Model loaded."
         except Exception as e:
             self.model_error = str(e)
-            self.model_loaded.set()
             print(f"Failed to load model: {e}")
             if "cudnn" in str(e).lower() or "cuda" in str(e).lower():
                 print("Hint: Try setting device = cpu in your config, or install cuDNN.")
+            return
+        finally:
+            self.model_loaded.set()
+        print(f"{ready} Ready for dictation!")
+        print(f"Hold [{HOTKEY_NAME}] to record, release to transcribe.")
+        print("Press Ctrl+C to quit.")
 
-    def _transcribe_groq(self, wav_path):
-        """Transcribe a WAV file via Groq's hosted Whisper API."""
+    def _transcribe_cloud(self, wav_path):
+        """Transcribe a WAV file through the configured cloud backend."""
         resp = post_audio_with_retry(
-            GROQ_API_URL,
-            self.groq_api_key,
-            wav_path,
-            {"model": GROQ_MODEL, "response_format": "text", "temperature": "0"},
-        )
-        return resp.text.strip()
-
-    def _transcribe_voxtral_cloud(self, wav_path):
-        """Transcribe a WAV file via Mistral's hosted Voxtral API."""
-        resp = post_audio_with_retry(
-            VOXTRAL_API_URL, self.mistral_api_key, wav_path, {"model": VOXTRAL_MODEL}
-        )
-        return resp.json()["text"].strip()
+            CLOUD["url"], self.cloud_api_key, wav_path, CLOUD["form"](CLOUD_MODEL))
+        return CLOUD["text"](resp).strip()
 
     def notify(self, title, message, icon="dialog-information", timeout=2000):
         """Send a desktop notification."""
@@ -277,8 +255,7 @@ class Dictation:
             stderr=subprocess.DEVNULL
         )
         print("Recording...")
-        hotkey_name = HOTKEY.name if hasattr(HOTKEY, 'name') else HOTKEY.char
-        self.notify("Recording...", f"Release {hotkey_name.upper()} when done", "audio-input-microphone", 30000)
+        self.notify("Recording...", f"Release {HOTKEY_NAME.upper()} when done", "audio-input-microphone", 30000)
 
     def stop_recording(self):
         if not self.recording:
@@ -304,10 +281,8 @@ class Dictation:
 
         # Transcribe
         try:
-            if self.use_groq:
-                text = self._transcribe_groq(self.temp_file.name)
-            elif self.use_voxtral_cloud:
-                text = self._transcribe_voxtral_cloud(self.temp_file.name)
+            if CLOUD:
+                text = self._transcribe_cloud(self.temp_file.name)
             else:
                 segments, info = self.model.transcribe(
                     self.temp_file.name,

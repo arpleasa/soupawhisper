@@ -24,13 +24,12 @@ class OutputTests(unittest.TestCase):
         d.model_loaded = threading.Event()
         d.model_loaded.set()
         d.model_error = None
-        d.use_groq = True
-        d.use_voxtral_cloud = False
         d.temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         d.temp_file.close()
-        d._transcribe_groq = lambda path: "hello world"
+        d._transcribe_cloud = lambda path: "hello world"
 
-        with mock.patch.object(dictate, "AUTO_TYPE", auto_type), \
+        with mock.patch.object(dictate, "CLOUD", dictate.CLOUD_BACKENDS["groq"]), \
+             mock.patch.object(dictate, "AUTO_TYPE", auto_type), \
              mock.patch.object(dictate, "COPY_TO_CLIPBOARD", copy), \
              mock.patch.object(dictate, "NOTIFICATIONS", False), \
              mock.patch("subprocess.run") as run, \
