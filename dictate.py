@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-SoupaWhisper - Voice dictation tool using faster-whisper.
-Hold the hotkey to record, release to transcribe and copy to clipboard.
+SoupaWhisper - Voice dictation tool using faster-whisper or a cloud API.
+Hold the hotkey to record (or tap it to start and tap again to stop). The
+transcript is typed into the active window and/or copied to the clipboard.
 """
 
 import argparse

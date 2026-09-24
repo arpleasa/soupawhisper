@@ -66,14 +66,11 @@ class ConfigEditTests(unittest.TestCase):
         self.path.write_text("[whisper]\nmodel   =   voxtral:voxtral-mini-2602  \n")
         self.assertEqual(tray.read_config_value(self.path, "whisper", "model"), "voxtral:voxtral-mini-2602")
 
-    def test_notifications_enabled_parsing(self):
-        self.assertTrue(tray.notifications_enabled(self.path))  # example config: true
+    def test_read_bool_parsing(self):
         for raw, expected in [("false", False), ("OFF", False), ("0", False), ("no", False),
                               ("true", True), ("yes", True), ("1", True)]:
             self.path.write_text(f"[behavior]\n# notifications = false\nnotifications = {raw}\n")
-            self.assertEqual(tray.notifications_enabled(self.path), expected, raw)
-        self.path.write_text("[behavior]\nauto_type = true\n")
-        self.assertTrue(tray.notifications_enabled(self.path))  # missing key defaults on
+            self.assertEqual(tray.read_bool(self.path, "behavior", "notifications"), expected, raw)
 
     def test_read_bool_for_each_toggle(self):
         for _, key in tray.BEHAVIOR_TOGGLES:
@@ -94,7 +91,7 @@ class ConfigEditTests(unittest.TestCase):
         tray.set_config_value(self.path, "behavior", "notifications", "false")
         changed = [(b, a) for b, a in zip(before, self.lines()) if b != a]
         self.assertEqual(changed, [("notifications = true", "notifications = false")])
-        self.assertFalse(tray.notifications_enabled(self.path))
+        self.assertFalse(tray.read_bool(self.path, "behavior", "notifications"))
 
     def test_file_mode_preserved(self):
         self.path.chmod(0o600)

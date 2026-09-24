@@ -3,7 +3,8 @@
 
 A system-tray icon for the soupawhisper systemd user service: the icon shows
 whether dictation is running, and its menu starts/stops/restarts the service,
-switches model and hotkey, toggles auto-start, and opens logs or the config.
+switches model and hotkey, toggles auto-start and the on/off [behavior]
+settings, and opens logs or the config.
 
 Runs on the system python3 because it needs PyGObject (python3-gi). It does
 not import faster-whisper; it only edits config.ini and calls systemctl.
@@ -25,8 +26,8 @@ SERVICE = "soupawhisper"
 POLL_SECONDS = 2
 EXIT_MISSING_APPINDICATOR = 3  # the systemd unit does not restart on this code
 
-# Soup bowl icons shipped in icons/ (steam = dictation running). Named
-# *-symbolic so the panel recolors them like its other icons.
+# Icons shipped in icons/: a microphone in a soup bowl, dimmed when dictation
+# is stopped. Named *-symbolic so the panel recolors them like its other icons.
 ICON_DIR = Path(__file__).resolve().parent / "icons"
 ICON_RUNNING = "soupawhisper-running-symbolic"
 ICON_STOPPED = "soupawhisper-stopped-symbolic"
@@ -177,10 +178,6 @@ def read_bool(path, section, key, default=True):
     if value is None:
         return default
     return value.strip().lower() not in ("0", "false", "no", "off")
-
-
-def notifications_enabled(path=CONFIG_PATH):
-    return read_bool(path, "behavior", "notifications")
 
 
 def open_terminal(command):
